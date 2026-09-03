@@ -1,0 +1,9 @@
+services:
+  m365-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: m365-admin-pwsh:local
+    stdin_open: true
+    tty: true
+    network_mode: host
