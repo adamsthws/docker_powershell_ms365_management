@@ -1,0 +1,79 @@
+Subject: Technical incident report: {{MAILBOX}} compromise, {{START_DATE}} - {{END_DATE}}
+
+Report date: {{REPORT_DATE}}
+All times UTC unless marked. Local = UTC{{OFFSET}}.
+
+[Plain text so it pastes cleanly into Outlook on the web. Sources for each section are the
+files in the case folder; see procedures/11-report.md.]
+
+
+1. SUMMARY AND SCOPE
+
+The mailbox {{MAILBOX}} was compromised from {{START_UTC}} to {{LAST_ATTACKER_UTC}}. [What the attacker did, in one sentence.] Containment came at {{CONTAINED_UTC}} (password reset and sign-in session revoke).
+
+- Tenant: {{TENANT}} ({{MAILBOX_COUNT}} mailboxes)
+- Affected: [mailboxes]
+- Initial access: [confirmed vector with evidence, or "not confirmed" plus what the pattern fits]
+
+
+2. INDICATORS OF COMPROMISE
+
+IP addresses:
+- {{IP}} - [operations], [first-last UTC]
+
+Inbox rules:
+- "{{NAME}}" - [condition -> actions] (RuleIdentity {{ID}})
+
+Phishing subjects:
+- "{{SUBJECT}}" - {{COUNT}} sent
+
+Lure received by the user: [date, sender, subject, MessageId from Find-BecLureMessage]
+
+The legitimate user's IPs: [knownGoodIpPrefixes]
+
+
+3. DETAILED TIMELINE (UTC)
+
+{{UTC}} - {{SOURCE IP or Admin}} - [event]
+
+Sources: Search-UnifiedAuditLog, Get-MessageTraceV2, Entra sign-in logs.
+
+
+4. MALICIOUS INBOX RULES
+
+[Per rule: priority, name, condition, actions, purpose. How rules were attributed to the attacker (New-InboxRule events from attacker IPs).]
+
+
+5. OUTBOUND PHISHING ANALYSIS
+
+[Total sent since compromise, attacker-sent, unique recipients (excluding Failed). One line per wave: sending IP, window, subject, count. Priority recipients (attacker replies). Internal recipients.]
+
+
+6. CONTAINMENT AND ERADICATION
+
+[From actions.log: every change made, with time and command. Persistence checks and their results: MFA methods, devices, OAuth consents, forwarding, transport rules, permissions, mobile devices. Lock-out verification.]
+
+
+7. SCOPING ACROSS THE TENANT
+
+[Invoke-BecTenantSweep results: attacker IPs tenant-wide, restricted senders, send volume, suspicious rules, forwarding.]
+
+
+8. NOTIFICATION
+
+[Recipient count, batches, date sent, template used, how the list was built.]
+
+
+9. MAIL RECOVERY
+
+[What was deleted (Get-BecDeletedItems), what was restored, retention changes.]
+
+
+10. EVIDENCE FILES
+
+[Case folder path and contents.]
+
+
+11. OPEN ITEMS AND HARDENING
+
+- [ ] ...

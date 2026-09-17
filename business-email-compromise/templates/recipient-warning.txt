@@ -1,0 +1,19 @@
+Subject: Please delete our email titled "{{PHISHING_SUBJECT}}" - do not open it
+
+Dear customer / colleague,
+
+If you received an email from {{MAILBOX}} with the subject {{PHISHING_SUBJECTS_QUOTED}} between {{START_DATE}} and {{END_DATE}}, please do not open it, click any links, or enter any details. Delete it straight away.
+
+That email was not sent by us. Someone gained unauthorised access to our {{MAILBOX_DESCRIPTION}} mailbox and used it to send a fake {{LURE_DESCRIPTION}} message designed to steal email passwords.
+
+If you have already clicked the link or entered your details, please change your email password immediately and let your IT support know.
+
+We have now secured the account, removed the unauthorised access and checked the rest of our systems. Emails from us are safe to receive again. This message contains no links or attachments.
+
+We're sorry for any inconvenience. If you have any questions, or would like to check whether an email from us is genuine, please call us on {{PHONE}} rather than replying to an email.
+
+Kind regards,
+
+{{SENDER_NAME}}
+{{ORG_NAME}}
+{{PHONE}}

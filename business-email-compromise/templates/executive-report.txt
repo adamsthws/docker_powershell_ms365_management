@@ -1,0 +1,46 @@
+Subject: Incident summary: {{MAILBOX}} mailbox compromise, {{START_DATE}} - {{END_DATE}}
+
+[Plain text so it pastes cleanly into Outlook on the web. All times local; say which timezone.]
+
+WHAT HAPPENED
+
+Between {{START_DATE}} and {{END_DATE}} an unauthorised person had access to the {{MAILBOX}} mailbox. They used it to send about {{PHISHING_COUNT}} fake "{{LURE_DESCRIPTION}}" emails to {{RECIPIENT_COUNT}} of our contacts, designed to steal the recipients' email passwords.
+
+[One or two sentences on how they stayed hidden: rules hiding mail, deleted items.] The attacker was locked out on {{CONTAINED_DATE}} and [no other company mailbox was affected / list others].
+
+
+IMPACT
+
+- Customers and suppliers: {{RECIPIENT_COUNT}} contacts received a phishing email from our genuine address. Anyone who clicked and entered details may have had their own email compromised.
+- Our mailbox: [what was hidden or deleted, for how long, whether recoverable].
+- Targeted contacts: [any supplier/customer whose mail was specifically hidden; payment fraud risk].
+- Other staff accounts: [result of the tenant sweep].
+- Company reputation: contacts saw suspicious mail from our domain. All have now been warned.
+
+
+TIMELINE ({{TIMEZONE}})
+
+{{DATE TIME}} - [First attacker activity]
+{{DATE TIME}} - [Phishing wave 1: N emails]
+{{DATE TIME}} - [Further waves]
+{{DATE TIME}} - [Last attacker activity]
+{{DATE TIME}} - Password reset and all sessions signed out.
+{{DATE TIME}} - Investigation of all mailboxes and warning email sent to all {{RECIPIENT_COUNT}} recipients.
+
+
+HOW WE RESPONDED
+
+1. Removed the attacker's access. The password was reset and every signed-in session was cancelled. We confirmed [no] extra login methods or apps had been added.
+2. Removed the hiding rules. [N] rules were saved as evidence, then deleted.
+3. Checked how far it spread. [Audit and sweep result.]
+4. Identified everyone affected. A trace of all mail sent since {{START_DATE}} produced the list of {{RECIPIENT_COUNT}} recipients.
+5. Warned recipients. A warning email (no links or attachments) went to all {{RECIPIENT_COUNT}}.
+
+
+STATUS AND NEXT STEPS
+
+The incident is contained: the attacker has no access [and no other accounts are affected]. Remaining actions:
+
+- [Open items from the technical report, in plain language]
+
+How the attacker first got the password: [confirmed cause, or "has not been confirmed; most likely ..."].
