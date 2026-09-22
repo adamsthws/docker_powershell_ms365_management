@@ -77,12 +77,17 @@ Copy the printed URL into your host browser, sign in, and the OAuth redirect wil
 
 The compose file uses `network_mode: host` so the container shares your host's `localhost`, letting the OAuth loopback redirect (`http://localhost:PORT/...`) reach the container's local auth listener without port-mapping guesswork.
 
+## Business email compromise recovery
+
+[`business-email-compromise/`](business-email-compromise/README.md) is a runbook and tooling for recovering a compromised Microsoft 365 mailbox, built on this container. It covers intake, containment, evidence, investigation, recipient notification, mail recovery, the tenant sweep and reporting. Start a case with `business-email-compromise/scripts/new-case.sh`.
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `Dockerfile` | Builds the image: PowerShell + modules + `xdg-open` stub |
 | `docker-compose.yml` | Runs the container interactively with host networking |
+| `business-email-compromise/` | BEC recovery procedures, PowerShell helpers and case scripts |
 
 ## Notes
 
