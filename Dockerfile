@@ -18,7 +18,9 @@ RUN pwsh -NoLogo -NonInteractive -Command " \
     Install-Module Microsoft.PowerApps.Administration.PowerShell -Scope AllUsers -Force; \
     Install-Module Microsoft.PowerApps.PowerShell -Scope AllUsers -AllowClobber -Force; \
     Install-Module Az -Scope AllUsers -Force; \
-    Install-Module Microsoft365DSC -Scope AllUsers -Force \
+    Install-Module Microsoft365DSC -Scope AllUsers -Force; \
+    Install-Module Pester -MinimumVersion 5.5.0 -Scope AllUsers -Force -SkipPublisherCheck; \
+    Install-Module PSScriptAnalyzer -Scope AllUsers -Force \
     "
 
 WORKDIR /root
