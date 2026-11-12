@@ -28,6 +28,7 @@ function Restore-RecoverableItems { [CmdletBinding()] param($Identity, $SourceFo
 
 function Connect-MgGraph { [CmdletBinding()] param($Scopes, $TenantId, $LoginHint, $ClientTimeout, [switch]$NoWelcome, [switch]$UseDeviceCode) }
 function Get-MgOrganization { [CmdletBinding()] param() }
+function Get-MgSubscribedSku { [CmdletBinding()] param([switch]$All) }
 function Get-MgContext { [CmdletBinding()] param() }
 function Update-MgUser { [CmdletBinding()] param($UserId, [switch]$AccountEnabled) }
 function Revoke-MgUserSignInSession { [CmdletBinding()] param($UserId) }

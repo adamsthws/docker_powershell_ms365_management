@@ -207,66 +207,205 @@ function Get-BecIdentityReview {
 
 #endregion
 
+#region 02 - Tenant capabilities
+
+# Which checks work depends on the tenant's licences. Run once per case, after connecting.
+function Get-BecTenantCapabilities {
+    param([switch]$Force)
+    if (-not (Confirm-BecStep -Force:$Force -Step '02 Tenant licences' `
+            -Description 'Reads the tenant''s subscriptions to see which checks will work: Entra ID P1 or P2 lets Graph read sign-in logs (Get-BecSignIns), P2 adds sign-in risk. Records the result as "entraPremium" in case.json.' `
+            -Writes 'case.json (entraPremium)')) { return }
+
+    $plans = @(Get-MgSubscribedSku -All | Where-Object { $_.CapabilityStatus -in 'Enabled', 'Warning' } |
+        ForEach-Object { $_.ServicePlans } | Where-Object { $_.ProvisioningStatus -eq 'Success' } | ForEach-Object { $_.ServicePlanName })
+    $level = if ($plans -contains 'AAD_PREMIUM_P2') { 'P2' } elseif ($plans -contains 'AAD_PREMIUM') { 'P1' } else { 'none' }
+    Set-BecCaseValue entraPremium $level
+
+    $premium = $level -ne 'none'
+    @(
+        [pscustomobject]@{ Capability = 'Sign-in logs through Graph (Get-BecSignIns)'; Available = $premium; Otherwise = 'Export from the portal and use Import-BecSignInExport' }
+        [pscustomobject]@{ Capability = 'Sign-in log history in the portal'; Available = if ($premium) { '30 days' } else { '7 days' }; Otherwise = 'Export it today; the Exchange audit log keeps sign-ins longer' }
+        [pscustomobject]@{ Capability = 'Sign-in risk details'; Available = $level -eq 'P2'; Otherwise = 'Risk columns read "hidden"' }
+    ) | Format-Table -AutoSize -Wrap | Out-String -Width 300 | Out-Host
+    if (-not $premium) { Write-Host $global:BecPortalSignInExportHelp -ForegroundColor Yellow }
+}
+
+#endregion
+
 #region 05 - Sign-in logs
 
-# Sign-in logs through Graph need Entra ID P1 or P2. Without it, export them from the portal.
+# Entra error codes that show containment taking effect.
+$global:BecContainmentErrorCodes = @{
+    50057 = 'account disabled (sign-in blocked)'
+    50173 = 'old session refused: tokens revoked or password changed'
+    50133 = 'old session refused: password changed'
+}
+
+$global:BecPortalSignInExportHelp = @'
+Without Entra ID P1 or P2, Graph cannot read sign-in logs, but the Entra admin centre shows the last 7 days. Export them now, before they age out:
+  1. Entra admin centre > Monitoring & health > Sign-in logs, Date: last 7 days.
+  2. Download > JSON, on both the "User sign-ins (interactive)" and "User sign-ins (non-interactive)" tabs.
+  3. Copy the downloaded files into the case's evidence/ folder (the container only sees the case folder).
+  4. $signins = Import-BecSignInExport evidence/InteractiveSignIns_*.json, evidence/NonInteractiveSignIns_*.json
+The Exchange audit log (Get-BecAuditLog) also records sign-ins (UserLoggedIn, UserLoginFailed) and keeps them longer.
+'@
+
+# One row per sign-in, from Graph objects or the portal's JSON export (PowerShell property names
+# are case-insensitive, so both shapes work).
+function ConvertTo-BecSignInRow {
+    param([Parameter(Mandatory, ValueFromPipeline)]$SignIn, [string[]]$KnownGood = @())
+    process {
+        $s = $SignIn
+        [pscustomobject]@{
+            DateUtc       = ConvertTo-BecUtc $s.CreatedDateTime
+            User          = $s.UserPrincipalName
+            IpAddress     = $s.IpAddress
+            KnownGood     = Test-BecKnownGoodIp $s.IpAddress $KnownGood
+            Country       = $s.Location.CountryOrRegion
+            City          = $s.Location.City
+            Asn           = $s.AutonomousSystemNumber
+            App           = $s.AppDisplayName
+            ClientApp     = $s.ClientAppUsed
+            AuthProtocol  = $s.AuthenticationProtocol
+            Interactive   = $s.IsInteractive
+            ErrorCode     = [int]$s.Status.ErrorCode
+            FailureReason = $s.Status.FailureReason
+            Device        = $s.DeviceDetail.DisplayName
+            Browser       = $s.DeviceDetail.Browser
+            OS            = $s.DeviceDetail.OperatingSystem
+            UserAgent     = $s.UserAgent
+        }
+    }
+}
+
+# Local analysis of sign-in rows already retrieved; no tenant call.
+function Show-BecSignInSummary {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Rows)
+    if (-not $Rows) { Write-Host 'No sign-ins to summarise.'; return }
+    $Rows = @($Rows | Sort-Object DateUtc)
+    Write-Host "$($Rows.Count) sign-ins from $($Rows[0].DateUtc) to $($Rows[-1].DateUtc) (UTC)"
+
+    $deviceCode = @($Rows | Where-Object { $_.AuthProtocol -match 'deviceCode' })
+    if ($deviceCode) { Write-Warning "$($deviceCode.Count) sign-in(s) used the device code flow. Check whether the user expected these." }
+
+    $refused = @($Rows | Where-Object { $_.ErrorCode -in $global:BecContainmentErrorCodes.Keys })
+    if ($refused) {
+        Write-Host "`nContainment taking effect" -ForegroundColor Yellow
+        $refused | Group-Object ErrorCode | ForEach-Object {
+            [pscustomobject]@{
+                ErrorCode = $_.Name
+                Meaning   = $global:BecContainmentErrorCodes[[int]$_.Name]
+                Count     = $_.Count
+                FirstUtc  = $_.Group[0].DateUtc
+                LastUtc   = $_.Group[-1].DateUtc
+            }
+        } | Sort-Object FirstUtc | Format-Table -AutoSize | Out-String -Width 300 | Out-Host
+        $since = $refused[0].DateUtc
+        $after = @($Rows | Where-Object { $_.DateUtc -gt $since -and $_.ErrorCode -eq 0 })
+        if ($after) {
+            Write-Host "$($after.Count) successful sign-in(s) after containment began ($since). Confirm they are the user with the new password:" -ForegroundColor Yellow
+            $after | Group-Object IpAddress | ForEach-Object {
+                [pscustomobject]@{
+                    IpAddress = $_.Name
+                    KnownGood = $_.Group[0].KnownGood
+                    FirstUtc  = $_.Group[0].DateUtc
+                    Count     = $_.Count
+                    Devices   = @($_.Group | ForEach-Object { if ($_.Device) { $_.Device } else { $_.OS } } | Sort-Object -Unique) -join ', '
+                    Apps      = @($_.Group.App | Group-Object | Sort-Object Count -Descending | Select-Object -First 3 -ExpandProperty Name) -join ', '
+                }
+            } | Format-Table -AutoSize | Out-String -Width 300 | Out-Host
+        }
+    }
+
+    # IPv6 addresses rotate within a home or mobile connection, so group by network instead of by IP.
+    Write-Host "`nSign-ins from unknown IPs, grouped by network (ASN) and country" -ForegroundColor Yellow
+    $Rows | Where-Object { -not $_.KnownGood } | Group-Object { "$($_.Asn)|$($_.Country)" } | ForEach-Object {
+        $g = $_.Group
+        $ok = @($g | Where-Object { $_.ErrorCode -eq 0 }).Count
+        [pscustomobject]@{
+            Network  = if ($g[0].Asn) { "AS$($g[0].Asn)" } else { '-' }
+            Country  = $g[0].Country
+            IPs      = @($g.IpAddress | Sort-Object -Unique).Count
+            Success  = $ok
+            Failed   = $g.Count - $ok
+            FirstUtc = $g[0].DateUtc
+            LastUtc  = $g[-1].DateUtc
+            Devices  = @($g | ForEach-Object { if ($_.Device) { $_.Device } else { $_.OS } } | Where-Object { $_ } | Sort-Object -Unique | Select-Object -First 4) -join ', '
+            Apps     = @($g.App | Group-Object | Sort-Object Count -Descending | Select-Object -First 3 -ExpandProperty Name) -join ', '
+        }
+    } | Sort-Object FirstUtc | Format-Table -AutoSize | Out-String -Width 300 | Out-Host
+    $good = @($Rows | Where-Object KnownGood).Count
+    if ($good) { Write-Host "$good sign-in(s) from known-good networks not shown." }
+}
+
+# Sign-in logs through Graph need Entra ID P1 or P2. Without it, export them from the portal and
+# use Import-BecSignInExport. This uses the beta API on purpose: v1.0 has no AuthenticationProtocol
+# (device code detection), AutonomousSystemNumber or signInEventTypes (non-interactive sign-ins).
 function Get-BecSignIns {
     param([string]$Upn, [int]$Days = 30, [switch]$IncludeNonInteractive, [switch]$Force)
     $Upn = Resolve-BecUpn $Upn
+    if ((Get-BecCase).entraPremium -eq 'none') {
+        Write-Warning 'case.json records no Entra ID P1/P2 (Get-BecTenantCapabilities), so Graph cannot read sign-in logs.'
+        Write-Host $global:BecPortalSignInExportHelp -ForegroundColor Yellow
+        return
+    }
     $file = "evidence/signins-$(Get-BecTimestamp).csv"
     if (-not (Confirm-BecStep -Force:$Force -Step "05 Sign-in logs for $Upn" `
-            -Description "Pulls $Upn's sign-ins for the last $Days days$(if ($IncludeNonInteractive) { ', including non-interactive sign-ins (where stolen-token replay shows up)' }), flags device code sign-ins and groups sign-ins from unknown IPs. Needs Entra ID P1 or P2." `
+            -Description "Pulls $Upn's sign-ins for the last $Days days$(if ($IncludeNonInteractive) { ', including non-interactive sign-ins (where stolen-token replay shows up)' }), flags device code sign-ins, shows when containment took effect and groups sign-ins from unknown networks. Needs Entra ID P1 or P2." `
             -Writes $file)) { return }
 
     $since = (Get-Date).ToUniversalTime().AddDays(-$Days).ToString('yyyy-MM-ddTHH:mm:ssZ')
     $base = "userPrincipalName eq '$Upn' and createdDateTime ge $since"
-
-    $raw = @(Get-MgBetaAuditLogSignIn -Filter $base -All)
-    if ($IncludeNonInteractive) {
-        # AiTM token replay usually shows up as non-interactive sign-ins.
-        $raw += @(Get-MgBetaAuditLogSignIn -Filter "$base and signInEventTypes/any(t: t eq 'nonInteractiveUser')" -All)
+    try {
+        $raw = @(Get-MgBetaAuditLogSignIn -Filter $base -All -ErrorAction Stop)
+        if ($IncludeNonInteractive) {
+            # AiTM token replay usually shows up as non-interactive sign-ins.
+            $raw += @(Get-MgBetaAuditLogSignIn -Filter "$base and signInEventTypes/any(t: t eq 'nonInteractiveUser')" -All -ErrorAction Stop)
+        }
+    } catch {
+        if ("$_" -notmatch 'RequestFromNonPremiumTenant|premium license') { throw }
+        Write-BecLog 'Sign-in logs not available through Graph: the tenant has no Entra ID P1/P2'
+        Write-Warning 'This tenant has no Entra ID P1 or P2, so Graph cannot read its sign-in logs. Nothing was saved.'
+        Write-Host $global:BecPortalSignInExportHelp -ForegroundColor Yellow
+        return
     }
 
-    $knownGood = Get-BecKnownGoodPrefixes
-    $rows = $raw | Sort-Object Id -Unique | ForEach-Object {
-        [pscustomobject]@{
-            DateUtc        = $_.CreatedDateTime
-            IpAddress      = $_.IpAddress
-            KnownGood      = Test-BecKnownGoodIp $_.IpAddress $knownGood
-            Country        = $_.Location.CountryOrRegion
-            City           = $_.Location.City
-            App            = $_.AppDisplayName
-            ClientApp      = $_.ClientAppUsed
-            AuthProtocol   = $_.AuthenticationProtocol
-            Interactive    = $_.IsInteractive
-            ErrorCode      = $_.Status.ErrorCode
-            FailureReason  = $_.Status.FailureReason
-            Browser        = $_.DeviceDetail.Browser
-            OS             = $_.DeviceDetail.OperatingSystem
-            UserAgent      = $_.UserAgent
-        }
-    } | Sort-Object DateUtc
-
+    $rows = @($raw | Sort-Object Id -Unique | ConvertTo-BecSignInRow -KnownGood (Get-BecKnownGoodPrefixes) | Sort-Object DateUtc)
     $rows | Export-Csv (Get-BecPath $file) -NoTypeInformation
-    Write-Host "$(@($rows).Count) sign-ins saved to $file" -ForegroundColor Green
+    Write-Host "$($rows.Count) sign-ins saved to $file" -ForegroundColor Green
+    Show-BecSignInSummary $rows
+    $rows
+}
 
-    $deviceCode = $rows | Where-Object { $_.AuthProtocol -match 'deviceCode' }
-    if ($deviceCode) { Write-Warning "$(@($deviceCode).Count) sign-in(s) used the device code flow. Check whether the user expected these." }
+# The portal's sign-in log download (JSON) for tenants without P1/P2, or for history Graph
+# no longer returns. Exports cover every user in the tenant; only the case mailbox is kept.
+function Import-BecSignInExport {
+    param([Parameter(Mandatory)][string[]]$Path, [string]$Upn, [switch]$Force)
+    $Upn = Resolve-BecUpn $Upn
+    $files = @(foreach ($p in $Path) {
+            $full = if ([IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $global:BecCaseDir $p }
+            Get-ChildItem -Path $full -File -ErrorAction SilentlyContinue
+        })
+    if (-not $files) {
+        Write-Warning "No files match $($Path -join ', '). Copy the portal's JSON downloads into the case's evidence/ folder first: the container only sees the case folder."
+        return
+    }
+    $out = "evidence/signins-export-$(Get-BecTimestamp).csv"
+    if (-not (Confirm-BecStep -Force:$Force -Step "05 Import sign-in log export for $Upn" `
+            -Description "Reads $($files.Count) sign-in log download(s) from the Entra admin centre ($($files.Name -join ', ')), keeps $Upn's sign-ins and summarises them the same way as Get-BecSignIns. The tenant is not contacted." `
+            -Writes $out)) { return }
 
-    Write-Host "`nSign-ins from unknown IPs, grouped" -ForegroundColor Yellow
-    $rows | Where-Object { -not $_.KnownGood } | Group-Object IpAddress | ForEach-Object {
-        $ok = @($_.Group | Where-Object { $_.ErrorCode -eq 0 }).Count
-        [pscustomobject]@{
-            IpAddress = $_.Name
-            Country   = ($_.Group | Select-Object -First 1).Country
-            Success   = $ok
-            Failed    = $_.Count - $ok
-            FirstUtc  = ($_.Group | Select-Object -First 1).DateUtc
-            LastUtc   = ($_.Group | Select-Object -Last 1).DateUtc
-            Apps      = @($_.Group.App | Sort-Object -Unique) -join ', '
-        }
-    } | Sort-Object FirstUtc | Format-Table -AutoSize -Wrap | Out-Host
+    $raw = @(foreach ($f in $files) {
+            if ($f.Extension -ne '.json') { Write-Warning "$($f.Name): only the portal's JSON download is supported (Download > JSON). Skipped."; continue }
+            Get-Content $f.FullName -Raw | ConvertFrom-Json
+        })
+    $mine = @($raw | Where-Object { $_.userPrincipalName -eq $Upn })
+    if ($raw.Count -gt $mine.Count) { Write-Host "Ignored $($raw.Count - $mine.Count) sign-in(s) by other users in the export." }
 
+    $rows = @($mine | Sort-Object id -Unique | ConvertTo-BecSignInRow -KnownGood (Get-BecKnownGoodPrefixes) | Sort-Object DateUtc)
+    $rows | Export-Csv (Get-BecPath $out) -NoTypeInformation
+    Write-BecLog "Imported $($rows.Count) sign-ins for $Upn from $($files.Name -join ', ') into $out"
+    Show-BecSignInSummary $rows
     $rows
 }
 
@@ -282,9 +421,12 @@ Each step describes what it will do and asks "Proceed? [y/N]" before touching th
   Test-BecCommandSurface               after connecting: check every cmdlet/parameter exists
   Show-BecCase | Set-BecCaseValue <name> <value> | Add-BecCaseValue attackerIps <ip>
 
-  02 Invoke-BecContainment              Get-BecIdentityReview
+  02 Get-BecTenantCapabilities         which checks this tenant's licences allow
+     Invoke-BecContainment              Get-BecIdentityReview
      Enable-BecSignIn
-  05 $signins = Get-BecSignIns [-Days 30] [-IncludeNonInteractive]
+  05 $signins = Get-BecSignIns [-Days 30] [-IncludeNonInteractive]       needs Entra ID P1/P2
+     $signins = Import-BecSignInExport evidence/InteractiveSignIns_*.json, evidence/NonInteractiveSignIns_*.json
+     Show-BecSignInSummary $signins
 
 Procedures: business-email-compromise/procedures/ in the repo.
 '@ | Write-Host

@@ -9,9 +9,18 @@ business-email-compromise/scripts/bec-shell.sh graph <case-dir>
 ```
 ```powershell
 Connect-BecGraph            # add -Device only if browser sign-in fails and device code is allowed
+Get-BecTenantCapabilities   # once per case: which checks this tenant's licences allow
 ```
 
 `Connect-BecGraph` signs in to `tenant` from `case.json` (or `-Tenant contoso.onmicrosoft.com`) and pre-fills `adminUpn` (or `-AdminUpn`). It allows 15 minutes to finish the browser sign-in (`-TimeoutSeconds`), which leaves time for a first-time consent screen. Afterwards it checks that the tenant it reached owns the case mailbox's domain, and warns if not. Only a completed sign-in is logged as `Connected` in `actions.log`.
+
+`Get-BecTenantCapabilities` records `entraPremium` (`P2`, `P1` or `none`) in `case.json`:
+
+| Licence | Sign-in logs through Graph (`Get-BecSignIns`) | Portal sign-in log history | Sign-in risk |
+|---|---|---|---|
+| Entra ID P2 | Yes | 30 days | Yes |
+| Entra ID P1 (included in Microsoft 365 Business Premium and E3) | Yes | 30 days | Shown as `hidden` |
+| None (Business Basic or Standard, for example) | No: export from the portal and use `Import-BecSignInExport` ([05](05-investigate.md)) | **7 days**: export it on day one | Shown as `hidden` |
 
 ## 1. Block sign-in and revoke sessions
 

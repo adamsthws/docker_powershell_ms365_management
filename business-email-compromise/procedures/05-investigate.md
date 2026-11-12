@@ -29,11 +29,28 @@ To see who did the deleting, filter the rows: `$audit | Where-Object Operation -
 
 ## 2. Sign-in logs (Graph session)
 
+With Entra ID P1 or P2 (see `Get-BecTenantCapabilities` in [02](02-contain.md)):
+
 ```powershell
 $signins = Get-BecSignIns -Days 30 -IncludeNonInteractive
 ```
 
-This needs Entra ID P1 or P2. Without it, use **Entra admin centre → Sign-in logs**, filter by user, and add the **Authentication protocol** column.
+**Without P1 or P2**, Graph refuses (`Authentication_RequestFromNonPremiumTenantOrB2CTenant`) and `Get-BecSignIns` prints these steps instead. The portal still shows the last **7 days**, so export them on the first day of the case:
+
+1. Entra admin centre → **Monitoring & health → Sign-in logs**, Date: last 7 days.
+2. **Download → JSON**, on both the **User sign-ins (interactive)** and **User sign-ins (non-interactive)** tabs. The download covers every user; the import keeps only the case mailbox.
+3. Copy the files into the case's `evidence/` folder. The container only sees the case folder.
+4. Import them:
+
+```powershell
+$signins = Import-BecSignInExport evidence/InteractiveSignIns_*.json, evidence/NonInteractiveSignIns_*.json
+```
+
+Both commands save a CSV in `evidence/` and print the same summary (`Show-BecSignInSummary $signins` reprints it):
+
+- **Device code warning** if any sign-in used the device code flow.
+- **Containment taking effect:** the first and last sign-in refused because the account was disabled (`50057`) or because an old session was revoked or the password changed (`50173`, `50133`). The first `50057` is a good source for `containedUtc`. Any **successful sign-ins after containment** are listed by IP and device: confirm they are the user with the new password.
+- **Unknown networks**, grouped by network (ASN) and country rather than by IP, because home and mobile IPv6 addresses change constantly. Hosting providers (cloud ASNs) stand out; a mail app's servers (for example a parcel-tracking app with a mail consent) look the same, so match them against the consents in `Get-BecIdentityReview`.
 
 | Pattern | Meaning |
 |---|---|
@@ -42,7 +59,7 @@ This needs Entra ID P1 or P2. Without it, use **Entra admin centre → Sign-in l
 | Only non-interactive sign-ins from the unknown IP | Stolen token replay (often AiTM) |
 | Many failures, then a success | Password spray or guessing |
 
-Add any new attacker IPs to `case.json` with `Add-BecCaseValue`.
+Add any new attacker IPs to `case.json` with `Add-BecCaseValue`. The Exchange audit log in section 1 also records sign-ins (`UserLoggedIn`, `UserLoginFailed`) and keeps them longer than the free portal, so use it for anything older than the export.
 
 ## 3. Find the lure (Exchange session)
 

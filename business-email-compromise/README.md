@@ -11,7 +11,7 @@ business-email-compromise/scripts/new-case.sh --tenant contoso.onmicrosoft.com -
 
 # 2. Containment: Graph session
 business-email-compromise/scripts/bec-shell.sh graph .scratch_area/bec-cases/<case>
-#    Connect-BecGraph; Invoke-BecContainment; Get-BecIdentityReview
+#    Connect-BecGraph; Get-BecTenantCapabilities; Invoke-BecContainment; Get-BecIdentityReview
 
 # 3. Mailbox work: Exchange session (a second terminal is fine)
 business-email-compromise/scripts/bec-shell.sh exo .scratch_area/bec-cases/<case>
@@ -27,10 +27,10 @@ Every session prints the available commands (`Show-BecHelp`) and the case detail
 | # | Procedure | Session | Key commands |
 |---|---|---|---|
 | 01 | [Intake and triage](procedures/01-intake.md): interview the user about the email they interacted with | host | `new-case.sh` |
-| 02 | [Contain the identity](procedures/02-contain.md): block sign-in, revoke sessions, reset password, remove attacker MFA, devices and apps | graph | `Invoke-BecContainment`, `Get-BecIdentityReview`, `Enable-BecSignIn` |
+| 02 | [Contain the identity](procedures/02-contain.md): check licences, block sign-in, revoke sessions, reset password, remove attacker MFA, devices and apps | graph | `Get-BecTenantCapabilities`, `Invoke-BecContainment`, `Get-BecIdentityReview`, `Enable-BecSignIn` |
 | 03 | [Preserve evidence](procedures/03-preserve.md): snapshot the mailbox, extend retention | exo | `Save-BecMailboxSnapshot`, `Set-BecRetention` |
 | 04 | [Remove mailbox persistence](procedures/04-mailbox-persistence.md): rules, forwarding, delegates, devices | exo | `Get-BecInboxRuleReport`, `Remove-BecInboxRule`, `Get-BecMailboxAccess` |
-| 05 | [Investigate access](procedures/05-investigate.md): attacker IPs, timeline, initial access, the lure | exo + graph | `Get-BecAuditLog`, `Get-BecUnknownIpActivity`, `Get-BecSignIns`, `Find-BecLureMessage` |
+| 05 | [Investigate access](procedures/05-investigate.md): attacker IPs, timeline, initial access, the lure | exo + graph | `Get-BecAuditLog`, `Get-BecUnknownIpActivity`, `Get-BecSignIns` or `Import-BecSignInExport`, `Find-BecLureMessage` |
 | 06 | [Outbound impact](procedures/06-outbound-impact.md): what was sent and to whom | exo | `Get-BecSentTrace`, `Get-BecSubjectSummary`, `New-BecRecipientList` |
 | 07 | [Notify recipients](procedures/07-notify.md): warning email in BCC batches, phone calls | exo | `Get-BecSendingStatus` |
 | 08 | [Recover mail](procedures/08-recover-mail.md): hidden and deleted mail | exo | `Get-BecDeletedItems`, `Restore-BecDeletedItems` |
@@ -74,7 +74,7 @@ business-email-compromise/
 
 ```
 .scratch_area/bec-cases/20250101-contoso-jane/
-├── case.json            upn, tenant, admin account, known-good IP prefixes, attacker IPs, phishing subjects, key times
+├── case.json            upn, tenant, admin account, licence level, known-good IP prefixes, attacker IPs, phishing subjects, key times
 ├── intake.md            Answers from the user interview
 ├── actions.log          Every change made to the tenant, with UTC times (written by the helpers)
 ├── evidence/            Snapshots, audit/sign-in exports, message traces, identity review
@@ -89,6 +89,6 @@ The case folder is mounted into the container, so files are written straight to 
 
 - The `m365-admin-pwsh:local` image (`docker compose build` in the repo root; `bec-shell.sh` builds it if it is missing)
 - An admin account in the client tenant with Exchange Administrator, plus User Administrator or Privileged Authentication Administrator to reset passwords and MFA
-- Entra ID P1 or P2 to read sign-in logs through Graph (otherwise use the portal)
+- Entra ID P1 or P2 to read sign-in logs through Graph. Without it, export the last 7 days from the portal and use `Import-BecSignInExport` (procedure 05). `Get-BecTenantCapabilities` tells you which applies.
 - For a client tenant your admin account doesn't belong to (guest or partner): `--tenant` in `new-case.sh` for Graph, and `Connect-BecExchange -Tenant` for Exchange (partner/GDAP admins)
 - The `Mailbox Import Export` role for mail recovery (step 08 explains how to assign it)

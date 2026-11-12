@@ -11,7 +11,7 @@ Start with [README.md](README.md) for the layout and the procedure order, then t
 ## Running a case
 
 1. `scripts/new-case.sh [--tenant <tenant>] [--admin <admin-upn>] <client> <upn> [known-good-ip-prefix ...]` creates the case folder and `case.json`.
-2. `scripts/bec-shell.sh graph <case-dir>`: Graph session (`BecGraph.ps1`) for containment, identity review and sign-in logs.
+2. `scripts/bec-shell.sh graph <case-dir>`: Graph session (`BecGraph.ps1`) for containment, identity review and sign-in logs. Run `Get-BecTenantCapabilities` once after connecting: without Entra ID P1/P2, sign-in logs come from a portal export (`Import-BecSignInExport`), and the portal only keeps 7 days.
 3. `scripts/bec-shell.sh exo <case-dir>`: Exchange session (`BecExchange.ps1`) for everything mailbox-related.
 4. Work through procedures 01-11 in order. If the mailbox is actively sending, contain (02) before intake.
 
@@ -44,7 +44,10 @@ When helping an operator mid-case, an agent usually sees pasted PowerShell outpu
 | Browser sign-in can't open inside the container | No browser in the image | The repo's `xdg-open` stub prints the URL; `-Device` / `-UseDeviceCode` as a fallback where device code isn't blocked |
 | Graph sign-in times out while the admin is still on the consent screen, and `actions.log` said "Connected as  (tenant )" | `Connect-MgGraph` waits 120 seconds by default; the old helper logged without checking | `Connect-BecGraph` passes `-ClientTimeout 900`; both connect helpers log `Connected` only after a completed sign-in |
 | Graph session lands in the admin account's home tenant, not the client's | Guest or partner admin; no tenant given | `--tenant` in `new-case.sh` / `Connect-BecGraph -Tenant`; `Connect-BecExchange -Tenant` (as `-DelegatedOrganization`) for partner admins. Both connect helpers check the case mailbox belongs to the tenant they reached |
+| `Get-BecSignIns`: 403 `Authentication_RequestFromNonPremiumTenantOrB2CTenant` | Graph only serves sign-in logs to tenants with Entra ID P1/P2, even though the portal shows them | `Get-BecSignIns` prints the portal export steps; `Import-BecSignInExport` reads the JSON download. The free portal keeps 7 days: export on day one |
+| Portal sign-in download contains other users | The download ignores the user filter | `Import-BecSignInExport` keeps only the case mailbox |
 | Identity review showed blank `CreatedUtc` and `Publisher` | `CreatedDateTime` is a typed property in current Graph modules; service principals have no `PublisherName` | Read `CreatedDateTime`, `VerifiedPublisher` and `AppOwnerOrganizationId` |
+| Sign-in API responses carry a beta deprecation header | `Get-MgBetaAuditLogSignIn` is the beta endpoint | Stay on beta for now: v1.0 has no `AuthenticationProtocol` (device code), `AutonomousSystemNumber` or `signInEventTypes` (non-interactive). Recheck when the image's Graph module changes |
 
 ## Attacker patterns to recognise
 
@@ -54,6 +57,7 @@ When helping an operator mid-case, an agent usually sees pasted PowerShell outpu
 - A burst of hundreds of sends with one subject (a fake "shared document" or "sign your contract" lure) from a hosting or VPN IP, followed seconds later by hard deletion of the sent copies.
 - `Re:` replies from the attacker IP to recipients who asked "is this genuine?". Those recipients are the highest priority to phone.
 - First attacker action about a minute after the user was active from their normal IP: AiTM or device-code phishing at that moment. Sign-in logs (`AuthProtocol`, non-interactive sign-ins) tell them apart.
+- Steady background sign-ins from a cloud provider's network (many IPs, one app, a non-browser user agent such as `ruby`): usually a third-party app using a mail consent, not an attacker. Match it against the consents in `Get-BecIdentityReview`, and ask the user whether they use that app.
 - A `UserLoginFailed` from an attacker IP just after containment: the lock-out working.
 
 ## Extending the tooling

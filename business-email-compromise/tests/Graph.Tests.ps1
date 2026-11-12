@@ -130,6 +130,40 @@ Describe 'Connect-BecGraph' -Tag Unit {
     }
 }
 
+Describe 'Get-BecTenantCapabilities' -Tag Unit {
+    BeforeEach { New-TestCase | Out-Null }
+
+    It 'queries nothing when declined' {
+        Mock Read-Host { 'n' }
+        Mock Get-MgSubscribedSku {}
+        Get-BecTenantCapabilities
+        Should -Invoke Get-MgSubscribedSku -Times 0
+    }
+
+    It 'records <Level> for <Plans>' -ForEach @(
+        @{ Plans = @('EXCHANGE_S_STANDARD'); Level = 'none' }
+        @{ Plans = @('EXCHANGE_S_STANDARD', 'AAD_PREMIUM'); Level = 'P1' }
+        @{ Plans = @('AAD_PREMIUM', 'AAD_PREMIUM_P2'); Level = 'P2' }
+    ) {
+        Mock Read-Host { 'y' }
+        Mock Get-MgSubscribedSku {
+            [pscustomobject]@{ CapabilityStatus = 'Enabled'; ServicePlans = @($Plans | ForEach-Object { [pscustomobject]@{ ServicePlanName = $_; ProvisioningStatus = 'Success' } }) }
+        }
+        Get-BecTenantCapabilities
+        (Get-BecCase).entraPremium | Should -Be $Level
+    }
+
+    It 'ignores suspended subscriptions and disabled plans' {
+        Mock Read-Host { 'y' }
+        Mock Get-MgSubscribedSku {
+            [pscustomobject]@{ CapabilityStatus = 'Suspended'; ServicePlans = @([pscustomobject]@{ ServicePlanName = 'AAD_PREMIUM_P2'; ProvisioningStatus = 'Success' }) }
+            [pscustomobject]@{ CapabilityStatus = 'Enabled'; ServicePlans = @([pscustomobject]@{ ServicePlanName = 'AAD_PREMIUM'; ProvisioningStatus = 'Disabled' }) }
+        }
+        Get-BecTenantCapabilities
+        (Get-BecCase).entraPremium | Should -Be 'none'
+    }
+}
+
 Describe 'Get-BecSignIns' -Tag Unit {
     BeforeEach {
         New-TestCase | Out-Null
@@ -155,6 +189,108 @@ Describe 'Get-BecSignIns' -Tag Unit {
         Should -Invoke Get-MgBetaAuditLogSignIn -Times 2 -Exactly
         Should -Invoke Get-MgBetaAuditLogSignIn -Times 1 -Exactly -ParameterFilter { $Filter -match 'nonInteractiveUser' }
         $rows | Should -HaveCount 2
+    }
+
+    It 'explains the portal export and saves nothing when the tenant has no P1/P2' {
+        Mock Get-MgBetaAuditLogSignIn { throw "Tenant is not a B2C tenant and doesn't have premium license Status: 403 (Forbidden) ErrorCode: Authentication_RequestFromNonPremiumTenantOrB2CTenant" }
+        Get-TestWarnings { Get-BecSignIns } | Should -Match 'no Entra ID P1 or P2'
+        Get-ChildItem (Join-Path $BecCaseDir 'evidence') -Filter 'signins-*' | Should -BeNullOrEmpty
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'Import-BecSignInExport' }
+        Get-TestLog | Should -Match 'not available through Graph'
+    }
+
+    It 'still throws other errors' {
+        Mock Get-MgBetaAuditLogSignIn { throw 'Insufficient privileges to complete the operation.' }
+        { Get-BecSignIns 3>$null } | Should -Throw '*Insufficient privileges*'
+    }
+
+    It 'does not query Graph when case.json records no P1/P2' {
+        Set-BecCaseValue entraPremium 'none'
+        Get-TestWarnings { Get-BecSignIns } | Should -Match 'no Entra ID P1/P2'
+        Should -Invoke Get-MgBetaAuditLogSignIn -Times 0
+        Should -Invoke Read-Host -Times 0
+    }
+}
+
+Describe 'Import-BecSignInExport' -Tag Unit {
+    BeforeAll {
+        # The shape of the Entra admin centre's JSON download (camelCase), trimmed.
+        function New-ExportRow([string]$Id, [string]$Upn, [string]$When, [string]$Ip, [int]$Code, [int]$Asn = 64500, [string]$Device = 'LAPTOP-1') {
+            [ordered]@{
+                id = $Id; createdDateTime = $When; userPrincipalName = $Upn; appDisplayName = 'Microsoft Office'; ipAddress = $Ip
+                autonomousSystemNumber = $Asn; authenticationProtocol = 'none'; isInteractive = $false; clientAppUsed = 'Mobile Apps and Desktop clients'
+                location = [ordered]@{ city = 'London'; countryOrRegion = 'GB' }; status = [ordered]@{ errorCode = $Code; failureReason = 'x' }
+                deviceDetail = [ordered]@{ displayName = $Device; operatingSystem = 'Windows10'; browser = '' }; userAgent = ''
+            }
+        }
+    }
+
+    BeforeEach {
+        $dir = New-TestCase
+        @(
+            New-ExportRow '1' 'jane@contoso.com' '2025-01-06T08:00:00Z' '2001:db8:1234::5' 0
+            New-ExportRow '2' 'jane@contoso.com' '2025-01-06T09:00:00Z' '198.51.100.23' 0 64511 ''
+            New-ExportRow '3' 'jane@contoso.com' '2025-01-06T20:00:00Z' '2001:db8:1234::5' 50057
+            New-ExportRow '4' 'jane@contoso.com' '2025-01-07T09:00:00Z' '2001:db8:1234::6' 50173
+            New-ExportRow '5' 'jane@contoso.com' '2025-01-07T10:00:00Z' '2001:db8:1234::7' 0 64500 'DESKTOP-2'
+            New-ExportRow '6' 'bob@contoso.com' '2025-01-06T08:30:00Z' '192.0.2.10' 0
+        ) | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dir 'evidence/NonInteractiveSignIns_2025-01-01_2025-01-07.json')
+        '[]' | Set-Content (Join-Path $dir 'evidence/InteractiveSignIns_2025-01-01_2025-01-07.json')
+    }
+
+    It 'reads nothing when declined' {
+        Mock Read-Host { 'n' }
+        Import-BecSignInExport 'evidence/*SignIns_*.json' | Should -BeNullOrEmpty
+        Get-ChildItem (Join-Path $BecCaseDir 'evidence') -Filter 'signins-export-*' | Should -BeNullOrEmpty
+    }
+
+    It 'keeps only the case mailbox, converts the rows and saves a CSV' {
+        Mock Read-Host { 'y' }
+        $rows = Import-BecSignInExport 'evidence/InteractiveSignIns_*.json', 'evidence/NonInteractiveSignIns_*.json'
+        $rows | Should -HaveCount 5
+        $rows.User | Sort-Object -Unique | Should -Be 'jane@contoso.com'
+        $rows[0].DateUtc | Should -Be '2025-01-06T08:00:00Z'
+        $rows[0].KnownGood | Should -BeTrue
+        ($rows | Where-Object IpAddress -eq '198.51.100.23').Asn | Should -Be 64511
+        ($rows | Where-Object ErrorCode -eq 50057).Country | Should -Be 'GB'
+        Get-ChildItem (Join-Path $BecCaseDir 'evidence') -Filter 'signins-export-*.csv' | Should -HaveCount 1
+        Get-TestLog | Should -Match 'Imported 5 sign-ins for jane@contoso.com'
+    }
+
+    It 'warns and asks nothing when no file matches' {
+        Mock Read-Host { 'y' }
+        Get-TestWarnings { Import-BecSignInExport 'evidence/nothing-*.json' } | Should -Match 'No files match'
+        Should -Invoke Read-Host -Times 0
+    }
+
+    It 'skips files that are not JSON' {
+        Mock Read-Host { 'y' }
+        'a,b' | Set-Content (Join-Path $BecCaseDir 'evidence/export.csv')
+        Get-TestWarnings { Import-BecSignInExport 'evidence/export.csv' } | Should -Match 'only the portal''s JSON download'
+    }
+}
+
+Describe 'Show-BecSignInSummary' -Tag Unit {
+    BeforeEach { New-TestCase | Out-Null }
+
+    It 'shows when containment took effect and the successful sign-ins after it' {
+        $rows = @(
+            [pscustomobject]@{ DateUtc = '2025-01-06T20:00:00Z'; IpAddress = '2001:db8:1234::5'; KnownGood = $true; ErrorCode = 50057; Asn = 64500; Country = 'GB'; App = 'Office'; Device = 'LAPTOP-1'; OS = 'Windows10'; AuthProtocol = 'none' }
+            [pscustomobject]@{ DateUtc = '2025-01-07T09:00:00Z'; IpAddress = '2001:db8:1234::6'; KnownGood = $true; ErrorCode = 50173; Asn = 64500; Country = 'GB'; App = 'Office'; Device = 'LAPTOP-1'; OS = 'Windows10'; AuthProtocol = 'none' }
+            [pscustomobject]@{ DateUtc = '2025-01-07T10:00:00Z'; IpAddress = '2001:db8:1234::7'; KnownGood = $true; ErrorCode = 0; Asn = 64500; Country = 'GB'; App = 'Windows Sign In'; Device = 'DESKTOP-2'; OS = 'Windows'; AuthProtocol = 'none' }
+        )
+        Show-BecSignInSummary $rows
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'Containment taking effect' }
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -match '1 successful sign-in\(s\) after containment began \(2025-01-06T20:00:00Z\)' }
+    }
+
+    It 'warns about device code sign-ins' {
+        $rows = @([pscustomobject]@{ DateUtc = '2025-01-06T08:00:00Z'; IpAddress = '198.51.100.23'; KnownGood = $false; ErrorCode = 0; Asn = 64511; Country = 'NL'; App = 'Office'; AuthProtocol = 'deviceCode' })
+        Get-TestWarnings { Show-BecSignInSummary $rows } | Should -Match 'device code'
+    }
+
+    It 'copes with no rows' {
+        { Show-BecSignInSummary @() } | Should -Not -Throw
     }
 }
 
