@@ -8,8 +8,10 @@ Run in an **Exchange** session:
 business-email-compromise/scripts/bec-shell.sh exo <case-dir>
 ```
 ```powershell
-Connect-BecExchange
+Connect-BecExchange         # -Tenant contoso.onmicrosoft.com only for a partner (GDAP) admin
 ```
+
+It signs in as `adminUpn` from `case.json` (or `-AdminUpn`), logs `Connected` only once the sign-in completes, and warns if the case mailbox is not in the tenant it reached.
 
 ## 1. Snapshot the mailbox
 

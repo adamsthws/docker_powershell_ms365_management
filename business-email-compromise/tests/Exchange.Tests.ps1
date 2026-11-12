@@ -317,3 +317,54 @@ Describe 'Get-BecSendingStatus' -Tag Unit {
         Get-BecSendingStatus | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Connect-BecExchange' -Tag Unit {
+    BeforeEach {
+        New-TestCase | Out-Null
+        Mock Connect-ExchangeOnline {}
+        Mock Get-ConnectionInformation { [pscustomobject]@{ State = 'Connected'; UserPrincipalName = 'admin@contoso.com'; TenantID = 'tid-1' } }
+        Mock Get-Mailbox { [pscustomobject]@{ PrimarySmtpAddress = 'jane@contoso.com' } }
+    }
+
+    It 'does not sign in when declined' {
+        Mock Read-Host { 'n' }
+        Connect-BecExchange
+        Should -Invoke Connect-ExchangeOnline -Times 0
+    }
+
+    It 'takes the admin account from case.json and only uses -DelegatedOrganization when asked' {
+        Mock Read-Host { 'y' }
+        Set-BecCaseValue adminUpn 'admin@contoso.com'
+        Set-BecCaseValue tenant 'contoso.onmicrosoft.com'
+        Connect-BecExchange
+        Should -Invoke Connect-ExchangeOnline -Times 1 -Exactly -ParameterFilter { $UserPrincipalName -eq 'admin@contoso.com' -and -not $DelegatedOrganization }
+        Connect-BecExchange -Tenant 'contoso.onmicrosoft.com'
+        Should -Invoke Connect-ExchangeOnline -Times 1 -Exactly -ParameterFilter { $DelegatedOrganization -eq 'contoso.onmicrosoft.com' }
+    }
+
+    It 'logs the connection with the tenant' {
+        Mock Read-Host { 'y' }
+        Connect-BecExchange
+        Get-TestLog | Should -Match 'Connected to Exchange Online as admin@contoso.com \(tenant tid-1\)'
+    }
+
+    It 'does not log "Connected" when the sign-in does not complete' {
+        Mock Read-Host { 'y' }
+        Mock Get-ConnectionInformation { $null }
+        Get-TestWarnings { Connect-BecExchange } | Should -Match 'did not complete'
+        Get-TestLog | Should -Not -Match 'Connected to'
+    }
+
+    It 'logs a failed sign-in instead of throwing' {
+        Mock Read-Host { 'y' }
+        Mock Connect-ExchangeOnline { throw 'User canceled authentication' }
+        { Connect-BecExchange 3>$null } | Should -Not -Throw
+        Get-TestLog | Should -Match 'sign-in failed: User canceled'
+    }
+
+    It 'warns when the case mailbox is not in the tenant' {
+        Mock Read-Host { 'y' }
+        Mock Get-Mailbox { $null }
+        Get-TestWarnings { Connect-BecExchange } | Should -Match 'no mailbox jane@contoso.com'
+    }
+}

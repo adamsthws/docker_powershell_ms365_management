@@ -12,10 +12,15 @@ Ask one question before anything else: **is the mailbox sending mail or behaving
 ## 2. Open the case
 
 ```bash
-business-email-compromise/scripts/new-case.sh <client-slug> <user@tenant.com> [known-good-ip-prefix ...]
+business-email-compromise/scripts/new-case.sh [--tenant <tenant>] [--admin <admin-upn>] <client-slug> <user@tenant.com> [known-good-ip-prefix ...]
 ```
 
 After you confirm, this creates `.scratch_area/bec-cases/<yyyymmdd>-<client>-<user>/` in the repo (gitignored) with `case.json`, `intake.md`, `actions.log` and folders for evidence, notification and report. Known-good prefixes are the office and home broadband ranges (for example `2001:db8:1234:5678:` or `203.0.113.`). You can add them later in `case.json`.
+
+- `--tenant` is the client's tenant (`contoso.onmicrosoft.com` or its tenant ID). `Connect-BecGraph` signs in there, so the session lands in the right tenant even when your admin account is a guest or partner from another tenant. Without it, Graph signs in to your admin account's home tenant.
+- `--admin` is the admin account you will sign in with. It is pre-filled at the Graph and Exchange sign-ins.
+
+Both can be set later with `Set-BecCaseValue tenant <tenant>` and `Set-BecCaseValue adminUpn <upn>`.
 
 ## 3. Interview the user
 

@@ -21,17 +21,37 @@ $global:BecDefaultAuditOperations = @(
 $global:BecHidingFolderPattern = 'RSS|Conversation History|Archive|Deleted|Junk|Notes|Clutter'
 $global:BecRuleKeywordPattern = 'invoice|payment|bank|remit|wire|transfer|account|paypal|amazon|docusign|password|security|phish|hack|spam|virus|compromis|fraud|scam'
 
+# Exchange signs in to the admin account's own tenant. -Tenant is only for a partner admin
+# (GDAP/DAP) managing the client's tenant from their own; it maps to -DelegatedOrganization, so it
+# is not taken from case.json. -AdminUpn defaults to "adminUpn" in case.json.
 function Connect-BecExchange {
-    param([string]$AdminUpn, [switch]$Device, [switch]$Force)
+    param([string]$AdminUpn, [string]$Tenant, [switch]$Device, [switch]$Force)
+    if (-not $AdminUpn) { $AdminUpn = (Get-BecCase).adminUpn }
     $how = if ($Device) { 'device code sign-in (enter a code at microsoft.com/devicelogin)' } else { 'browser sign-in (open the printed URL in your host browser)' }
     if (-not (Confirm-BecStep -Force:$Force -Step 'Connect to Exchange Online' `
-            -Description "Signs in to Exchange Online$(if ($AdminUpn) { " as $AdminUpn" }) using $how. Use an admin account in the client's tenant.")) { return }
+            -Description "Signs in to Exchange Online$(if ($AdminUpn) { " as $AdminUpn" })$(if ($Tenant) { " and manages $Tenant as a partner" }) using $how. Use an admin account in the client's tenant, or -Tenant for a partner admin. Afterwards it checks the case mailbox exists in the tenant it reached.")) { return }
 
     $params = @{ ShowBanner = $false }
     if ($AdminUpn) { $params.UserPrincipalName = $AdminUpn }
+    if ($Tenant) { $params.DelegatedOrganization = $Tenant }
     if ($Device) { $params.Device = $true }
-    Connect-ExchangeOnline @params
-    Write-BecLog "Connected to Exchange Online as $((Get-ConnectionInformation | Select-Object -First 1).UserPrincipalName)"
+    try { Connect-ExchangeOnline @params -ErrorAction Stop }
+    catch { Write-BecLog "Exchange Online sign-in failed: $($_.Exception.Message)"; Write-Warning (Get-BecSignInRetryHint 'Connect-BecExchange'); return }
+
+    $conn = Get-ConnectionInformation | Where-Object { $_.State -eq 'Connected' } | Select-Object -First 1
+    if (-not $conn) {
+        Write-BecLog 'Exchange Online sign-in did not complete (timed out or cancelled)'
+        Write-Warning (Get-BecSignInRetryHint 'Connect-BecExchange')
+        return
+    }
+    Write-BecLog "Connected to Exchange Online as $($conn.UserPrincipalName) (tenant $($conn.TenantID))"
+
+    # Wrong-tenant guard: the case mailbox must exist here.
+    $upn = Resolve-BecUpn
+    if (-not (Get-Mailbox -Identity $upn -ErrorAction SilentlyContinue)) {
+        Write-BecLog "WARNING: no mailbox $upn in tenant $($conn.TenantID)"
+        Write-Warning "There is no mailbox $upn in this tenant ($($conn.TenantID)). If this is the wrong tenant, run Disconnect-ExchangeOnline and sign in with an admin of the client's tenant (or -Tenant <client tenant> as a partner)."
+    }
 }
 
 #region 03 - Preserve evidence
@@ -527,7 +547,7 @@ function Show-BecHelp {
 BEC Exchange session. Case folder: /case (on the host: the case directory you passed in).
 Each step describes what it will do and asks "Proceed? [y/N]" before touching the tenant.
 
-  Connect-BecExchange [-AdminUpn admin@tenant] [-Device]
+  Connect-BecExchange [-AdminUpn admin@tenant] [-Tenant contoso.onmicrosoft.com (partner admins)] [-Device]
   Test-BecCommandSurface               after connecting: check every cmdlet/parameter exists
   Show-BecCase | Set-BecCaseValue <name> <value> | Add-BecCaseValue attackerIps <ip>
 

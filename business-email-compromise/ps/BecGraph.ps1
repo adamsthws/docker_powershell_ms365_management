@@ -17,17 +17,48 @@ $global:BecGraphScopes = @(
     'Policy.Read.All'
 )
 
+# -Tenant (a tenant ID or any of its domains, e.g. contoso.onmicrosoft.com) makes the sign-in land
+# in the client's tenant even when the admin account is a guest or partner from elsewhere. Without
+# it, Graph signs in to the admin account's home tenant. Both -Tenant and -AdminUpn default to
+# "tenant" and "adminUpn" in case.json.
 function Connect-BecGraph {
-    param([switch]$Device, [switch]$Force)
+    param([string]$Tenant, [string]$AdminUpn, [int]$TimeoutSeconds = 900, [switch]$Device, [switch]$Force)
+    $case = Get-BecCase
+    if (-not $Tenant) { $Tenant = $case.tenant }
+    if (-not $AdminUpn) { $AdminUpn = $case.adminUpn }
     $how = if ($Device) { 'device code sign-in (enter a code at microsoft.com/devicelogin)' } else { 'browser sign-in (open the printed URL in your host browser)' }
+    $target = @(
+        if ($Tenant) { "tenant $Tenant" } else { "the admin account's home tenant (pass -Tenant, or set ""tenant"" in case.json, for a client tenant)" }
+        if ($AdminUpn) { "as $AdminUpn" }
+    ) -join ' '
     if (-not (Confirm-BecStep -Force:$Force -Step 'Connect to Microsoft Graph' `
-            -Description "Signs in to Microsoft Graph using $how and requests these delegated permissions (an admin may need to consent the first time): $($global:BecGraphScopes -join ', ').")) { return }
+            -Description "Signs in to Microsoft Graph in $target using $how, allowing $TimeoutSeconds seconds to finish, and requests these delegated permissions (an admin may need to consent the first time): $($global:BecGraphScopes -join ', '). Afterwards it checks the case mailbox's domain belongs to the tenant it reached.")) { return }
 
-    $params = @{ Scopes = $global:BecGraphScopes; NoWelcome = $true }
-    if ($Device) { $params.UseDeviceCode = $true }
-    Connect-MgGraph @params
+    $params = @{ Scopes = $global:BecGraphScopes; NoWelcome = $true; ClientTimeout = $TimeoutSeconds }
+    if ($Tenant) { $params.TenantId = $Tenant }
+    if ($Device) { $params.UseDeviceCode = $true } elseif ($AdminUpn) { $params.LoginHint = $AdminUpn }
+    try { Connect-MgGraph @params -ErrorAction Stop }
+    catch { Write-BecLog "Microsoft Graph sign-in failed: $($_.Exception.Message)"; Write-Warning (Get-BecSignInRetryHint 'Connect-BecGraph' -HasTimeout); return }
+
     $ctx = Get-MgContext
+    if (-not $ctx.Account) {
+        Write-BecLog 'Microsoft Graph sign-in did not complete (timed out or cancelled)'
+        Write-Warning (Get-BecSignInRetryHint 'Connect-BecGraph' -HasTimeout)
+        return
+    }
     Write-BecLog "Connected to Microsoft Graph as $($ctx.Account) (tenant $($ctx.TenantId))"
+
+    # Wrong-tenant guard: the tenant must own the case mailbox's domain.
+    $domain = ((Resolve-BecUpn) -split '@')[-1]
+    $domains = @((Get-MgOrganization).VerifiedDomains.Name)
+    if ($domain -notin $domains) {
+        Write-BecLog "WARNING: tenant $($ctx.TenantId) does not own $domain"
+        Write-Warning "This tenant ($($ctx.TenantId)) does not own $domain, so it is probably the wrong tenant. Run Disconnect-MgGraph, then Connect-BecGraph -Tenant <the client's tenant, e.g. contoso.onmicrosoft.com>."
+    } elseif ($case.tenantId -and $case.tenantId -ne $ctx.TenantId) {
+        Write-Warning "case.json records tenant $($case.tenantId), but this session is in $($ctx.TenantId)."
+    } elseif (-not $case.tenantId) {
+        Set-BecCaseValue tenantId $ctx.TenantId
+    }
 }
 
 #region 02 - Contain
@@ -209,7 +240,7 @@ function Show-BecHelp {
 BEC Graph session. Case folder: /case (on the host: the case directory you passed in).
 Each step describes what it will do and asks "Proceed? [y/N]" before touching the tenant.
 
-  Connect-BecGraph [-Device]
+  Connect-BecGraph [-Tenant contoso.onmicrosoft.com] [-AdminUpn admin@tenant] [-Device]
   Test-BecCommandSurface               after connecting: check every cmdlet/parameter exists
   Show-BecCase | Set-BecCaseValue <name> <value> | Add-BecCaseValue attackerIps <ip>
 

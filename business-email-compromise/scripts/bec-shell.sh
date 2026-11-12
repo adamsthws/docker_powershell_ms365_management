@@ -33,12 +33,14 @@ case "$mode" in
 esac
 
 upn="$(sed -n 's/.*"upn": *"\([^"]*\)".*/\1/p' "$case_dir/case.json")"
+tenant="$(sed -n 's/.*"tenant": *"\([^"]*\)".*/\1/p' "$case_dir/case.json")"
 echo
 echo "=== Start a BEC $mode session ==="
 echo "Starts a throwaway m365-admin container for $purpose."
 echo "Nothing in the tenant is touched until you sign in and approve each step."
 echo "  Case:     $case_dir"
 echo "  Mailbox:  $upn"
+echo "  Tenant:   ${tenant:-not set in case.json}"
 read -r -p "Proceed? [y/N] " answer
 if [[ ! "$answer" =~ ^[[:space:]]*([yY]|[yY][eE][sS])[[:space:]]*$ ]]; then
     echo "Skipped."

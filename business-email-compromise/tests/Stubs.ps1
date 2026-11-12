@@ -5,7 +5,7 @@
 
 #region Exchange Online
 
-function Connect-ExchangeOnline { [CmdletBinding()] param($UserPrincipalName, [switch]$ShowBanner, [switch]$Device) }
+function Connect-ExchangeOnline { [CmdletBinding()] param($UserPrincipalName, $DelegatedOrganization, [switch]$ShowBanner, [switch]$Device) }
 function Get-ConnectionInformation { [CmdletBinding()] param() }
 function Get-InboxRule { [CmdletBinding()] param($Mailbox, $Identity, [switch]$IncludeHidden) }
 function Remove-InboxRule { [CmdletBinding(SupportsShouldProcess)] param($Mailbox, $Identity) }
@@ -26,7 +26,8 @@ function Restore-RecoverableItems { [CmdletBinding()] param($Identity, $SourceFo
 
 #region Microsoft Graph
 
-function Connect-MgGraph { [CmdletBinding()] param($Scopes, [switch]$NoWelcome, [switch]$UseDeviceCode) }
+function Connect-MgGraph { [CmdletBinding()] param($Scopes, $TenantId, $LoginHint, $ClientTimeout, [switch]$NoWelcome, [switch]$UseDeviceCode) }
+function Get-MgOrganization { [CmdletBinding()] param() }
 function Get-MgContext { [CmdletBinding()] param() }
 function Update-MgUser { [CmdletBinding()] param($UserId, [switch]$AccountEnabled) }
 function Revoke-MgUserSignInSession { [CmdletBinding()] param($UserId) }

@@ -10,12 +10,12 @@ Start with [README.md](README.md) for the layout and the procedure order, then t
 
 ## Running a case
 
-1. `scripts/new-case.sh <client> <upn> [known-good-ip-prefix ...]` creates the case folder and `case.json`.
+1. `scripts/new-case.sh [--tenant <tenant>] [--admin <admin-upn>] <client> <upn> [known-good-ip-prefix ...]` creates the case folder and `case.json`.
 2. `scripts/bec-shell.sh graph <case-dir>`: Graph session (`BecGraph.ps1`) for containment, identity review and sign-in logs.
 3. `scripts/bec-shell.sh exo <case-dir>`: Exchange session (`BecExchange.ps1`) for everything mailbox-related.
 4. Work through procedures 01-11 in order. If the mailbox is actively sending, contain (02) before intake.
 
-When helping an operator mid-case, an agent usually sees pasted PowerShell output rather than running commands itself. Read the output against the "look for" tables in the procedure for that step and say what is attacker activity and what is normal.
+When helping an operator mid-case, an agent usually sees pasted PowerShell output, or reads the files the helpers write to the case folder, rather than running commands itself. An agent cannot reuse the operator's sign-in: each container holds its token in memory only. If the operator asks the agent to run read-only checks itself, it needs its own session and its own browser sign-in. Read the output against the "look for" tables in the procedure for that step and say what is attacker activity and what is normal.
 
 ## Rules
 
@@ -42,6 +42,8 @@ When helping an operator mid-case, an agent usually sees pasted PowerShell outpu
 | BCC send rejected | Exchange Online allows 500 recipients per message | `New-BecRecipientList` batches at 450 |
 | Reports garbled when pasted into Outlook on the web | Markdown and tables don't survive | Plain-text templates in `templates/` |
 | Browser sign-in can't open inside the container | No browser in the image | The repo's `xdg-open` stub prints the URL; `-Device` / `-UseDeviceCode` as a fallback where device code isn't blocked |
+| Graph sign-in times out while the admin is still on the consent screen, and `actions.log` said "Connected as  (tenant )" | `Connect-MgGraph` waits 120 seconds by default; the old helper logged without checking | `Connect-BecGraph` passes `-ClientTimeout 900`; both connect helpers log `Connected` only after a completed sign-in |
+| Graph session lands in the admin account's home tenant, not the client's | Guest or partner admin; no tenant given | `--tenant` in `new-case.sh` / `Connect-BecGraph -Tenant`; `Connect-BecExchange -Tenant` (as `-DelegatedOrganization`) for partner admins. Both connect helpers check the case mailbox belongs to the tenant they reached |
 
 ## Attacker patterns to recognise
 
@@ -73,7 +75,7 @@ When helping an operator mid-case, an agent usually sees pasted PowerShell outpu
 |---|---|---|
 | Static | `tests/Static.Tests.ps1` | Every file parses and passes PSScriptAnalyzer (`tests/PSScriptAnalyzerSettings.psd1`). Every command resolves: Graph cmdlets and parameters are checked against the installed modules; Exchange cmdlets must be in the known list (catches typos). Exchange and Graph never mix in one file. Stubs cover every cmdlet and parameter. **Gating:** every function that calls the tenant is gated or only called from gated steps; every gate is `if (-not (Confirm-BecStep -Force:$Force ...)) { return }`; every tenant change comes after the prompt, is listed in `-Changes`, and supports `-WhatIf`; steps call steps with `-Force`; every step is in `Show-BecHelp` and a procedure. **Docs:** every command and script named exists, no `-Force` advice, documentation IP ranges only. |
 | Unit | `tests/Common.Tests.ps1`, `Exchange.Tests.ps1`, `Graph.Tests.ps1` | Behaviour with mocked cmdlets: prompt answers, declined steps change nothing, approved steps call the right cmdlet with the right arguments, `-WhatIf`, audit paging past 5000, message trace window splitting, recipient de-duplication and batching, rule detection, tenant sweep asks once. |
-| Scripts | `tests/Scripts.Tests.ps1` | `bash -n`, plus `new-case.sh` and `bec-shell.sh` run for real against a temp folder (usage, decline, create, refuse overwrite). |
+| Scripts | `tests/Scripts.Tests.ps1` | `bash -n`, plus `new-case.sh` and `bec-shell.sh` run for real against a temp folder (usage, options, decline, create, refuse overwrite). |
 | Live, read-only | `Test-BecCommandSurface` | In a connected session: every cmdlet and named parameter the helpers use exists in that tenant's module version. Exchange cmdlets only exist after connecting, so this is the only check for Exchange parameter names. Splatted parameters are not checked. |
 
 Exchange cmdlets can't be resolved offline. Their parameter names are covered only by the stubs, which we write ourselves, and by `Test-BecCommandSurface` against a real tenant. When Microsoft changes an Exchange cmdlet, the offline suite won't notice; run `Test-BecCommandSurface` after rebuilding the image.

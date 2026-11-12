@@ -84,6 +84,15 @@ function Add-BecCaseValue {
     Write-BecLog "case.$Name += $($Value -join ', ')"
 }
 
+# Interactive sign-in from the container waits for the browser to redirect back to localhost.
+# If the admin is slow (for example on a first-time consent screen), it times out.
+function Get-BecSignInRetryHint {
+    param([Parameter(Mandatory)][string]$Command, [switch]$HasTimeout)
+    $timeout = if ($HasTimeout) { ' (-TimeoutSeconds, default 900)' } else { '' }
+    "Sign-in did not complete. Run $Command again and finish signing in in the browser before it times out$timeout. " +
+    "If the browser cannot reach the localhost redirect, use $Command -Device where the tenant allows device code sign-in."
+}
+
 function Resolve-BecUpn {
     param([string]$Upn)
     if ($Upn) { return $Upn }

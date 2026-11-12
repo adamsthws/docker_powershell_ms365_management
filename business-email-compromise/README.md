@@ -6,7 +6,8 @@ A repeatable runbook and tooling for responding to a compromised Microsoft 365 m
 
 ```bash
 # 1. Open a case (creates .scratch_area/bec-cases/<date>-<client>-<user>/)
-business-email-compromise/scripts/new-case.sh contoso jane@contoso.com 203.0.113.
+business-email-compromise/scripts/new-case.sh --tenant contoso.onmicrosoft.com --admin admin@contoso.onmicrosoft.com \
+    contoso jane@contoso.com 203.0.113.
 
 # 2. Containment: Graph session
 business-email-compromise/scripts/bec-shell.sh graph .scratch_area/bec-cases/<case>
@@ -73,7 +74,7 @@ business-email-compromise/
 
 ```
 .scratch_area/bec-cases/20250101-contoso-jane/
-├── case.json            upn, known-good IP prefixes, attacker IPs, phishing subjects, key times
+├── case.json            upn, tenant, admin account, known-good IP prefixes, attacker IPs, phishing subjects, key times
 ├── intake.md            Answers from the user interview
 ├── actions.log          Every change made to the tenant, with UTC times (written by the helpers)
 ├── evidence/            Snapshots, audit/sign-in exports, message traces, identity review
@@ -89,4 +90,5 @@ The case folder is mounted into the container, so files are written straight to 
 - The `m365-admin-pwsh:local` image (`docker compose build` in the repo root; `bec-shell.sh` builds it if it is missing)
 - An admin account in the client tenant with Exchange Administrator, plus User Administrator or Privileged Authentication Administrator to reset passwords and MFA
 - Entra ID P1 or P2 to read sign-in logs through Graph (otherwise use the portal)
+- For a client tenant your admin account doesn't belong to (guest or partner): `--tenant` in `new-case.sh` for Graph, and `Connect-BecExchange -Tenant` for Exchange (partner/GDAP admins)
 - The `Mailbox Import Export` role for mail recovery (step 08 explains how to assign it)

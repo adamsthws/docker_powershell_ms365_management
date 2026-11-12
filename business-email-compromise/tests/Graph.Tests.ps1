@@ -58,7 +58,12 @@ Describe 'Enable-BecSignIn' -Tag Unit {
 }
 
 Describe 'Connect-BecGraph' -Tag Unit {
-    BeforeEach { New-TestCase | Out-Null; Mock Connect-MgGraph {}; Mock Get-MgContext { [pscustomobject]@{ Account = 'admin@contoso.com'; TenantId = 'tid' } } }
+    BeforeEach {
+        New-TestCase | Out-Null
+        Mock Connect-MgGraph {}
+        Mock Get-MgContext { [pscustomobject]@{ Account = 'admin@contoso.com'; TenantId = 'tid-1' } }
+        Mock Get-MgOrganization { [pscustomobject]@{ VerifiedDomains = @(@{ Name = 'contoso.com' }, @{ Name = 'contoso.onmicrosoft.com' }) } }
+    }
 
     It 'does not sign in when declined' {
         Mock Read-Host { 'n' }
@@ -69,7 +74,59 @@ Describe 'Connect-BecGraph' -Tag Unit {
     It 'requests the documented scopes and uses device code only when asked' {
         Mock Read-Host { 'y' }
         Connect-BecGraph -Device
-        Should -Invoke Connect-MgGraph -ParameterFilter { $UseDeviceCode -and $Scopes -contains 'AuditLog.Read.All' }
+        Should -Invoke Connect-MgGraph -ParameterFilter { $UseDeviceCode -and $Scopes -contains 'AuditLog.Read.All' -and -not $LoginHint }
+    }
+
+    It 'allows 15 minutes to sign in and takes tenant and admin from case.json' {
+        Mock Read-Host { 'y' }
+        Set-BecCaseValue tenant 'contoso.onmicrosoft.com'
+        Set-BecCaseValue adminUpn 'admin@contoso.onmicrosoft.com'
+        Connect-BecGraph
+        Should -Invoke Connect-MgGraph -Times 1 -Exactly -ParameterFilter {
+            $TenantId -eq 'contoso.onmicrosoft.com' -and $LoginHint -eq 'admin@contoso.onmicrosoft.com' -and $ClientTimeout -eq 900 -and -not $UseDeviceCode
+        }
+    }
+
+    It '-Tenant overrides case.json' {
+        Mock Read-Host { 'y' }
+        Set-BecCaseValue tenant 'contoso.onmicrosoft.com'
+        Connect-BecGraph -Tenant 'fabrikam.onmicrosoft.com'
+        Should -Invoke Connect-MgGraph -ParameterFilter { $TenantId -eq 'fabrikam.onmicrosoft.com' }
+    }
+
+    It 'logs the connection and records the tenant ID when the tenant owns the mailbox domain' {
+        Mock Read-Host { 'y' }
+        Connect-BecGraph
+        Get-TestLog | Should -Match 'Connected to Microsoft Graph as admin@contoso.com \(tenant tid-1\)'
+        (Get-BecCase).tenantId | Should -Be 'tid-1'
+    }
+
+    It 'does not log "Connected" when the sign-in times out' {
+        Mock Read-Host { 'y' }
+        Mock Get-MgContext { $null }
+        Get-TestWarnings { Connect-BecGraph } | Should -Match 'did not complete'
+        Get-TestLog | Should -Not -Match 'Connected to'
+        Get-TestLog | Should -Match 'did not complete'
+    }
+
+    It 'logs a failed sign-in instead of throwing' {
+        Mock Read-Host { 'y' }
+        Mock Connect-MgGraph { throw 'User canceled authentication' }
+        { Connect-BecGraph 3>$null } | Should -Not -Throw
+        Get-TestLog | Should -Match 'sign-in failed: User canceled'
+    }
+
+    It 'warns when the tenant does not own the mailbox domain' {
+        Mock Read-Host { 'y' }
+        Mock Get-MgOrganization { [pscustomobject]@{ VerifiedDomains = @(@{ Name = 'fabrikam.com' }) } }
+        Get-TestWarnings { Connect-BecGraph } | Should -Match 'does not own contoso.com'
+        (Get-BecCase).tenantId | Should -BeNullOrEmpty
+    }
+
+    It 'warns when the tenant differs from the one recorded in case.json' {
+        Mock Read-Host { 'y' }
+        Set-BecCaseValue tenantId 'tid-other'
+        Get-TestWarnings { Connect-BecGraph } | Should -Match 'records tenant tid-other'
     }
 }
 
