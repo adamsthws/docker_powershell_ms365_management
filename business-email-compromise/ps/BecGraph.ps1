@@ -111,21 +111,39 @@ function Enable-BecSignIn {
 
 #region 02 - Identity review
 
+# Tenants that own Microsoft's first-party apps.
+$global:BecMicrosoftTenantIds = @('f8cdef31-a31e-4b4a-93e4-5f571e91255a', '72f988bf-86f1-41af-91ab-2d7cd011db47')
+# Delegated scopes that let an app read or act on mail, files or contacts.
+$global:BecSensitiveScopePattern = '(^|\s)(Mail\.|MailboxSettings\.|EAS\.|EWS\.|IMAP\.|POP\.|SMTP\.|Files\.|Sites\.|Contacts\.|Notes\.|full_access)'
+
 function Get-BecIdentityReview {
-    param([string]$Upn, [switch]$Force)
+    param([string]$Upn, [int]$RecentDays = 30, [switch]$Force)
     $Upn = Resolve-BecUpn $Upn
     $dir = "evidence/identity-$(Get-BecTimestamp)"
     if (-not (Confirm-BecStep -Force:$Force -Step "02 Identity review for $Upn" `
-            -Description 'Lists the things that survive a password reset and session revoke: MFA methods, registered and owned devices, delegated OAuth app consents and enterprise app assignments. Remove anything unfamiliar in the Entra admin centre.' `
+            -Description "Lists the things that survive a password reset and session revoke: MFA methods, registered and owned devices, delegated OAuth app consents and enterprise app assignments, and flags anything added in the last $RecentDays days, outside password-reset emails and apps that can read mail or files. Remove anything unfamiliar in the Entra admin centre." `
             -Writes "$dir/")) { return }
+
+    $domain = ($Upn -split '@')[-1]
+    $tenantId = "$((Get-MgContext).TenantId)"
+    $recent = (Get-Date).ToUniversalTime().AddDays(-$RecentDays)
 
     $methods = Get-MgUserAuthenticationMethod -UserId $Upn | ForEach-Object {
         $p = $_.AdditionalProperties
+        $type = "$($p['@odata.type'])" -replace '#microsoft.graph.', ''
+        # Current Graph modules return CreatedDateTime as a typed property; older ones in AdditionalProperties.
+        $created = if ($_.CreatedDateTime) { $_.CreatedDateTime } else { $p.createdDateTime }
+        $flags = @(
+            if ($created -and [datetime]$created -ge $recent) { "added in the last $RecentDays days" }
+            if ($p.emailAddress -and ($p.emailAddress -split '@')[-1] -ne $domain) { 'outside email address: it can reset the password' }
+            if ($type -eq 'softwareOathAuthenticationMethod') { 'code app (TOTP): confirm the user set it up' }
+        )
         [pscustomobject]@{
-            Type        = "$($p['@odata.type'])" -replace '#microsoft.graph.', ''
-            Detail      = @($p.displayName, $p.phoneNumber, $p.emailAddress, $p.model, $p.deviceTag) | Where-Object { $_ } | Select-Object -First 1
-            CreatedUtc  = $p.createdDateTime
-            Id          = $_.Id
+            Type       = $type
+            Detail     = @($p.displayName, $p.phoneNumber, $p.emailAddress, $p.model, $p.deviceTag) | Where-Object { $_ } | Select-Object -First 1
+            CreatedUtc = ConvertTo-BecUtc $created
+            Flag       = $flags -join '; '
+            Id         = $_.Id
         }
     }
 
@@ -136,19 +154,31 @@ function Get-BecIdentityReview {
                 DisplayName     = $p.displayName
                 OperatingSystem = "$($p.operatingSystem) $($p.operatingSystemVersion)"
                 TrustType       = $p.trustType
-                RegisteredUtc   = $p.registrationDateTime
-                LastSignInUtc   = $p.approximateLastSignInDateTime
+                RegisteredUtc   = ConvertTo-BecUtc $p.registrationDateTime
+                LastSignInUtc   = ConvertTo-BecUtc $p.approximateLastSignInDateTime
+                Flag            = if ($p.registrationDateTime -and [datetime]$p.registrationDateTime -ge $recent) { "registered in the last $RecentDays days" } else { '' }
                 Id              = $_.Id
             }
         }
 
     $grants = Get-MgUserOauth2PermissionGrant -UserId $Upn -All | ForEach-Object {
         $sp = Get-MgServicePrincipal -ServicePrincipalId $_.ClientId -ErrorAction SilentlyContinue
-        [pscustomobject]@{ App = $sp.DisplayName; AppId = $sp.AppId; Publisher = $sp.PublisherName; Scope = $_.Scope; GrantId = $_.Id }
+        $ownerId = "$($sp.AppOwnerOrganizationId)"
+        $scope = @($_.Scope -split '\s+' | Where-Object { $_ }) -join ' '
+        [pscustomobject]@{
+            App               = $sp.DisplayName
+            AppId             = $sp.AppId
+            Owner             = if (-not $sp) { 'unknown (app not found)' } elseif ($ownerId -in $global:BecMicrosoftTenantIds) { 'Microsoft' } elseif ($ownerId -and $ownerId -eq $tenantId) { 'this tenant' } else { 'third party' }
+            VerifiedPublisher = $sp.VerifiedPublisher.DisplayName
+            ConsentedFor      = if ($_.ConsentType -eq 'AllPrincipals') { 'all users (admin consent)' } else { 'this user' }
+            Flag              = if ($scope -match $global:BecSensitiveScopePattern) { 'can read mail or files: confirm the user uses it' } else { '' }
+            Scope             = $scope
+            GrantId           = $_.Id
+        }
     }
 
     $appRoles = Get-MgUserAppRoleAssignment -UserId $Upn -All |
-        Select-Object ResourceDisplayName, CreatedDateTime, PrincipalDisplayName, Id
+        Select-Object ResourceDisplayName, @{ n = 'CreatedUtc'; e = { ConvertTo-BecUtc $_.CreatedDateTime } }, PrincipalDisplayName, Id
 
     $methods | Export-Csv (Get-BecPath "$dir/auth_methods.csv") -NoTypeInformation
     $devices | Export-Csv (Get-BecPath "$dir/devices.csv") -NoTypeInformation
@@ -156,15 +186,23 @@ function Get-BecIdentityReview {
     $appRoles | Export-Csv (Get-BecPath "$dir/app_role_assignments.csv") -NoTypeInformation
 
     Write-Host "`nAuthentication methods (look for phones/apps the user does not recognise, recent CreatedUtc)" -ForegroundColor Yellow
-    $methods | Format-Table -AutoSize | Out-Host
+    $methods | Format-Table Type, Detail, CreatedUtc -AutoSize | Out-String -Width 300 | Out-Host
     Write-Host 'Devices (look for registrations during the compromise window)' -ForegroundColor Yellow
-    $devices | Format-Table -AutoSize | Out-Host
-    Write-Host 'Delegated OAuth consents' -ForegroundColor Yellow
-    $grants | Format-Table -AutoSize -Wrap | Out-Host
+    $devices | Sort-Object RegisteredUtc -Descending | Format-Table DisplayName, OperatingSystem, TrustType, RegisteredUtc, LastSignInUtc -AutoSize | Out-String -Width 300 | Out-Host
+    Write-Host 'Delegated OAuth consents (an app keeps this access after a password reset)' -ForegroundColor Yellow
+    $grants | Format-List App, Owner, VerifiedPublisher, ConsentedFor, Flag, Scope | Out-String -Width 300 | Out-Host
     Write-Host 'Enterprise app assignments' -ForegroundColor Yellow
-    $appRoles | Format-Table -AutoSize | Out-Host
+    $appRoles | Sort-Object CreatedUtc -Descending | Format-Table -AutoSize | Out-String -Width 300 | Out-Host
 
-    Write-BecLog "Identity review of $Upn saved to $dir"
+    $flagged = @(@($methods) + @($devices) + @($grants) | Where-Object { $_.Flag })
+    if ($flagged) {
+        Write-Host "$($flagged.Count) item(s) flagged: confirm each one with the user." -ForegroundColor Yellow
+        foreach ($item in $flagged) {
+            $name = @($item.App, $item.DisplayName, $item.Detail, $item.Type) | Where-Object { $_ } | Select-Object -First 1
+            Write-Host "  - ${name}: $($item.Flag)" -ForegroundColor Yellow
+        }
+    }
+    Write-BecLog "Identity review of $Upn saved to $dir ($($flagged.Count) flagged)"
 }
 
 #endregion

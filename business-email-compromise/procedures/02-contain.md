@@ -38,7 +38,7 @@ A password reset on its own does **not** end existing sessions. Always revoke as
 Get-BecIdentityReview
 ```
 
-Saves to `evidence/identity-<timestamp>/` and shows:
+Saves to `evidence/identity-<timestamp>/` and shows the items below. The `Flag` column marks what to confirm with the user: methods and devices added in the last 30 days (`-RecentDays`), a password-reset email address outside the user's domain, a code (TOTP) app, and app consents that can read mail or files. Each consent shows whether the app is Microsoft's, the tenant's own or a third party's, its verified publisher, and whether the user or an admin consented.
 
 | Item | What to look for | Remove in |
 |---|---|---|

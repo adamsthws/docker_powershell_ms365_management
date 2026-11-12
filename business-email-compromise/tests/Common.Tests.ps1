@@ -89,3 +89,18 @@ Describe 'Case file' -Tag Unit {
         { Get-BecCase } | Should -Throw '*new-case.sh*'
     }
 }
+
+Describe 'ConvertTo-BecUtc' -Tag Unit {
+    It 'formats "<In>" as "<Out>"' -ForEach @(
+        @{ In = '2025-01-06T08:05:52Z'; Out = '2025-01-06T08:05:52Z' }
+        @{ In = '2025-01-06T08:05:52.1234567Z'; Out = '2025-01-06T08:05:52Z' }
+        @{ In = '2025-01-06T09:05:52+01:00'; Out = '2025-01-06T08:05:52Z' }
+        @{ In = ''; Out = '' }
+    ) {
+        ConvertTo-BecUtc $In | Should -Be $Out
+    }
+
+    It 'accepts a DateTime' {
+        ConvertTo-BecUtc ([datetime]::new(2025, 1, 6, 8, 5, 52, [DateTimeKind]::Utc)) | Should -Be '2025-01-06T08:05:52Z'
+    }
+}

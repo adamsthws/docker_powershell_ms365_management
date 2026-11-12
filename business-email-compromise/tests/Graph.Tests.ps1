@@ -159,27 +159,57 @@ Describe 'Get-BecSignIns' -Tag Unit {
 }
 
 Describe 'Get-BecIdentityReview' -Tag Unit {
-    BeforeEach { New-TestCase | Out-Null }
-
-    It 'exports methods, devices, consents and app assignments' {
-        Mock Read-Host { 'y' }
-        Mock Get-MgUserAuthenticationMethod { [pscustomobject]@{ Id = 'm1'; AdditionalProperties = @{ '@odata.type' = '#microsoft.graph.phoneAuthenticationMethod'; phoneNumber = '+44 7700 900000' } } }
-        Mock Get-MgUserRegisteredDevice { [pscustomobject]@{ Id = 'd1'; AdditionalProperties = @{ displayName = 'DESKTOP-1'; operatingSystem = 'Windows' } } }
+    BeforeEach {
+        New-TestCase | Out-Null
+        Mock Get-MgContext { [pscustomobject]@{ Account = 'admin@contoso.com'; TenantId = 'tid-1' } }
+        Mock Get-MgUserAuthenticationMethod {
+            [pscustomobject]@{ Id = 'm1'; CreatedDateTime = (Get-Date).AddDays(-2); AdditionalProperties = @{ '@odata.type' = '#microsoft.graph.phoneAuthenticationMethod'; phoneNumber = '+44 7700 900000' } }
+            [pscustomobject]@{ Id = 'm2'; CreatedDateTime = $null; AdditionalProperties = @{ '@odata.type' = '#microsoft.graph.emailAuthenticationMethod'; emailAddress = 'jane@example.net' } }
+            [pscustomobject]@{ Id = 'm3'; CreatedDateTime = $null; AdditionalProperties = @{ '@odata.type' = '#microsoft.graph.softwareOathAuthenticationMethod'; createdDateTime = '2020-01-01T00:00:00Z' } }
+        }
+        Mock Get-MgUserRegisteredDevice { [pscustomobject]@{ Id = 'd1'; AdditionalProperties = @{ displayName = 'DESKTOP-1'; operatingSystem = 'Windows'; registrationDateTime = '2020-05-01T10:00:00Z' } } }
         Mock Get-MgUserOwnedDevice { [pscustomobject]@{ Id = 'd1'; AdditionalProperties = @{ displayName = 'DESKTOP-1' } } }
-        Mock Get-MgUserOauth2PermissionGrant { [pscustomobject]@{ Id = 'g1'; ClientId = 'sp1'; Scope = 'Mail.Read offline_access' } }
-        Mock Get-MgServicePrincipal { [pscustomobject]@{ DisplayName = 'Suspicious App'; AppId = 'a1'; PublisherName = 'Unknown' } }
+        Mock Get-MgUserOauth2PermissionGrant {
+            [pscustomobject]@{ Id = 'g1'; ClientId = 'sp1'; Scope = ' Mail.Read offline_access'; ConsentType = 'Principal' }
+            [pscustomobject]@{ Id = 'g2'; ClientId = 'sp2'; Scope = 'User.Read'; ConsentType = 'AllPrincipals' }
+        }
+        Mock Get-MgServicePrincipal -ParameterFilter { $ServicePrincipalId -eq 'sp1' } { [pscustomobject]@{ DisplayName = 'Suspicious App'; AppId = 'a1'; AppOwnerOrganizationId = 'other-tenant'; VerifiedPublisher = @{ DisplayName = $null } } }
+        Mock Get-MgServicePrincipal -ParameterFilter { $ServicePrincipalId -eq 'sp2' } { [pscustomobject]@{ DisplayName = 'Office'; AppId = 'a2'; AppOwnerOrganizationId = 'f8cdef31-a31e-4b4a-93e4-5f571e91255a'; VerifiedPublisher = @{ DisplayName = 'Microsoft Corporation' } } }
         Mock Get-MgUserAppRoleAssignment { @() }
+    }
 
+    It 'exports methods, devices, consents and app assignments, and flags what needs checking' {
+        Mock Read-Host { 'y' }
         Get-BecIdentityReview
         $dir = Get-ChildItem (Join-Path $BecCaseDir 'evidence') -Directory -Filter 'identity-*'
-        (Import-Csv (Join-Path $dir 'auth_methods.csv')).Type | Should -Be 'phoneAuthenticationMethod'
-        Import-Csv (Join-Path $dir 'devices.csv') | Should -HaveCount 1
-        (Import-Csv (Join-Path $dir 'oauth_grants.csv')).App | Should -Be 'Suspicious App'
+
+        $methods = Import-Csv (Join-Path $dir 'auth_methods.csv')
+        $phone = $methods | Where-Object Type -eq 'phoneAuthenticationMethod'
+        $phone.CreatedUtc | Should -Match '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$'
+        $phone.Flag | Should -Match 'added in the last 30 days'
+        ($methods | Where-Object Type -eq 'emailAuthenticationMethod').Flag | Should -Match 'outside email'
+        ($methods | Where-Object Type -eq 'softwareOathAuthenticationMethod').CreatedUtc | Should -Be '2020-01-01T00:00:00Z'
+
+        $devices = Import-Csv (Join-Path $dir 'devices.csv')
+        $devices | Should -HaveCount 1
+        $devices.Flag | Should -BeNullOrEmpty
+
+        $grants = Import-Csv (Join-Path $dir 'oauth_grants.csv')
+        $suspicious = $grants | Where-Object App -eq 'Suspicious App'
+        $suspicious.Owner | Should -Be 'third party'
+        $suspicious.Flag | Should -Match 'can read mail'
+        $suspicious.Scope | Should -Be 'Mail.Read offline_access'
+        $office = $grants | Where-Object App -eq 'Office'
+        $office.Owner | Should -Be 'Microsoft'
+        $office.VerifiedPublisher | Should -Be 'Microsoft Corporation'
+        $office.ConsentedFor | Should -Match 'admin consent'
+        $office.Flag | Should -BeNullOrEmpty
+
+        Get-TestLog | Should -Match '\(4 flagged\)'
     }
 
     It 'queries nothing when declined' {
         Mock Read-Host { 'n' }
-        Mock Get-MgUserAuthenticationMethod {}
         Get-BecIdentityReview
         Should -Invoke Get-MgUserAuthenticationMethod -Times 0
     }

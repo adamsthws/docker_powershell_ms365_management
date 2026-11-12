@@ -14,6 +14,15 @@ function Get-BecPath {
 
 function Get-BecTimestamp { (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss') }
 
+# A DateTime or ISO 8601 string as "yyyy-MM-ddTHH:mm:ssZ", so times from Graph objects, JSON
+# exports and CSVs compare and sort the same way. Empty input gives ''.
+function ConvertTo-BecUtc {
+    param($Value)
+    if (-not $Value) { return '' }
+    $dt = if ($Value -is [datetime]) { $Value } else { [datetime]::Parse("$Value", [cultureinfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) }
+    $dt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+}
+
 # Every change made to the tenant is appended to actions.log; the technical report's
 # containment section is written from it.
 function Write-BecLog {

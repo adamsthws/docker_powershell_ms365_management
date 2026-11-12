@@ -44,6 +44,7 @@ When helping an operator mid-case, an agent usually sees pasted PowerShell outpu
 | Browser sign-in can't open inside the container | No browser in the image | The repo's `xdg-open` stub prints the URL; `-Device` / `-UseDeviceCode` as a fallback where device code isn't blocked |
 | Graph sign-in times out while the admin is still on the consent screen, and `actions.log` said "Connected as  (tenant )" | `Connect-MgGraph` waits 120 seconds by default; the old helper logged without checking | `Connect-BecGraph` passes `-ClientTimeout 900`; both connect helpers log `Connected` only after a completed sign-in |
 | Graph session lands in the admin account's home tenant, not the client's | Guest or partner admin; no tenant given | `--tenant` in `new-case.sh` / `Connect-BecGraph -Tenant`; `Connect-BecExchange -Tenant` (as `-DelegatedOrganization`) for partner admins. Both connect helpers check the case mailbox belongs to the tenant they reached |
+| Identity review showed blank `CreatedUtc` and `Publisher` | `CreatedDateTime` is a typed property in current Graph modules; service principals have no `PublisherName` | Read `CreatedDateTime`, `VerifiedPublisher` and `AppOwnerOrganizationId` |
 
 ## Attacker patterns to recognise
 
