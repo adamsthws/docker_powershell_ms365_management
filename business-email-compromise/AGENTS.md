@@ -1,6 +1,6 @@
 # AGENTS.md: business email compromise recovery
 
-Guidance for AI coding agents (and people) working in this folder, either extending the tooling or helping an operator run a live BEC case.
+Guidance for AI coding agents (and people) working in this folder, either extending the tooling or helping an operator run a live BEC case. The repository-wide rules in the [root AGENTS.md](../AGENTS.md) apply here too.
 
 ## What this is
 
@@ -19,6 +19,7 @@ When helping an operator mid-case, an agent usually sees pasted PowerShell outpu
 
 ## Rules
 
+- **Agents are read-only during a live case unless the operator says otherwise** (the root AGENTS.md rule). Here that covers the tenant (containment, password or MFA resets, rule removal, retention, recovery, sending mail), the case folder (`case.json`, `actions.log`, evidence) and the code in this folder. Before any change, say exactly what it is and wait for explicit approval; one approval covers only that change.
 - **Every step is gated.** Each step command calls `Confirm-BecStep` first. It describes the step, lists any tenant changes and the files it writes, asks `Proceed? [y/N]`, and logs the answer to `actions.log`. The shell scripts do the same. Keep this for every new step. `-Force` skips the prompt and is only for calls made from inside another gated step (for example `Invoke-BecTenantSweep` calling `Get-BecAuditLog -Force`). Never pass `-Force` on the operator's behalf. Pure local analysis of data already retrieved (`Get-BecSubjectSummary`, `Get-BecUnknownIpActivity`, `Import-BecSentTrace`, case.json helpers) is not gated.
 - **Preserve before you remove.** `Save-BecMailboxSnapshot` and `Set-BecRetention` (03) come before rule removal (04) or anything that changes the mailbox. `Remove-BecInboxRule` refuses to run without a snapshot. Keep that guard.
 - **Revoking sessions is not optional.** A password reset alone leaves refresh tokens valid. MFA methods, registered devices and OAuth consents survive both. Check them every time.
