@@ -5,6 +5,7 @@
 #   test.sh                 everything
 #   test.sh Static          syntax, lint (incl. PS 5.1 compatibility), ASCII-only, read-only and docs checks
 #   test.sh Unit            parser tests with synthetic AnyDesk and Prefetch data
+#   test.sh Scripts         shell script tests
 set -euo pipefail
 
 triage_dir="$(cd "$(dirname "$0")/.." && pwd)"

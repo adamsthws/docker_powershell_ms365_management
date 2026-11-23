@@ -92,7 +92,7 @@ The compose file uses `network_mode: host` so the container shares your host's `
 | `Dockerfile` | Builds the image: PowerShell + modules + `xdg-open` stub |
 | `docker-compose.yml` | Runs the container interactively with host networking |
 | `business-email-compromise/` | BEC recovery procedures, PowerShell helpers and case scripts |
-| `endpoint-triage/` | Read-only Windows endpoint checks |
+| `endpoint-triage/` | Read-only Windows endpoint checks, and WinRM/SSH access setup and removal |
 
 ## Notes
 

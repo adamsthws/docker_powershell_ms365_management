@@ -8,6 +8,7 @@ BeforeDiscovery {
     $checkCases = Get-ChildItem (Join-Path $root 'ps/checks') -Filter '*.ps1' | ForEach-Object { @{ Name = $_.Name; Path = $_.FullName } }
     $readOnlyCases = @(Get-ChildItem (Join-Path $root 'ps/checks') -Filter '*.ps1') + @(Get-Item (Join-Path $root 'ps/TriageCommon.ps1')) |
         ForEach-Object { @{ Name = $_.Name; Path = $_.FullName } }
+    $setupCases = Get-ChildItem (Join-Path $root 'ps/setup') -Filter '*.ps1' | ForEach-Object { @{ Name = $_.Name; Path = $_.FullName } }
 }
 
 BeforeAll {
@@ -106,6 +107,20 @@ Describe 'Check script conventions' -Tag Static {
         $n = $Name.Substring(0, 2)
         Get-Content (Join-Path $root 'ps/Invoke-EndpointTriage.ps1') -Raw | Should -Match "N = '$n'"
         Get-Content (Join-Path $root 'README.md') -Raw | Should -Match ([regex]::Escape($Name))
+    }
+
+    It '<Name> supports -WhatIf and asks first (ConfirmImpact High)' -ForEach $setupCases {
+        $text = Get-Content $Path -Raw
+        $text | Should -Match 'SupportsShouldProcess'
+        $text | Should -Match "ConfirmImpact = 'High'"
+        $text | Should -Match '\$PSCmdlet\.ShouldProcess\('
+    }
+
+    It 'Set-TriageAccess.ps1 gives the temporary admin a description Windows accepts (48 characters at most)' {
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'ps/setup/Set-TriageAccess.ps1'), [ref]$null, [ref]$null)
+        $assign = $ast.Find({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and "$($n.Left)" -eq '$accountNote' }, $true)
+        $assign | Should -Not -BeNullOrEmpty
+        $assign.Right.Expression.Value.Length | Should -BeLessOrEqual 48
     }
 }
 

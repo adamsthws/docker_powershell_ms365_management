@@ -17,6 +17,8 @@ holds client personal data).
 | `ps/checks/NN-*.ps1` | One read-only check per file (table below). Each runs on its own and prints a text report. |
 | `ps/TriageCommon.ps1` | Shared helpers: formatting, user hives, Prefetch parser, AnyDesk log parsers. |
 | `ps/Invoke-EndpointTriage.ps1` | Runs the checks and saves each to a file, plus a manifest; optionally collects AnyDesk logs. |
+| `ps/setup/Set-TriageAccess.ps1` | **Changes the endpoint.** Turns remote PowerShell access on (SSH with your GitHub keys, else WinRM with a client certificate), shows it with `-Status`, and undoes it all with `-Remove`. |
+| `scripts/new-winrm-cert.sh` | Makes your WinRM client certificate (the WinRM equivalent of an SSH key pair), outside any git repository. |
 | `scripts/test.sh`, `tests/` | Test suite (container, no endpoint needed). |
 
 ## The checks
@@ -44,7 +46,59 @@ All times are **local time on the endpoint**. Write the time zone next to any ti
 Ask the user when the call started and when it ended. Use generous edges (for example 30 minutes
 before the first download). Check 03 gives exact AnyDesk times once you are in.
 
-### 2. Run the checks
+### 2. Get access
+
+SSH needs nothing set up: the endpoint takes your public keys from `https://github.com/<you>.keys`.
+For the WinRM fallback, once per machine of yours, make a client certificate (the WinRM equivalent
+of an SSH key pair). WinRM cannot reuse the SSH key: Windows only accepts X.509 client certificates
+with RSA or ECDSA keys, and your GitHub key is Ed25519.
+
+```bash
+endpoint-triage/scripts/new-winrm-cert.sh          # writes ~/.config/endpoint-triage/, never inside a git repository
+```
+
+Then, for each endpoint:
+
+1. Copy `ps/setup/Set-TriageAccess.ps1` and `~/.config/endpoint-triage/winrm-client.cer` to the
+   endpoint with the remote-support tool's file transfer. **Never copy `winrm-client.key`
+   anywhere.** In an elevated Windows PowerShell in that folder, run the script from its text, so
+   no execution policy stops it:
+
+   ```powershell
+   & ([scriptblock]::Create([IO.File]::ReadAllText("$PWD\Set-TriageAccess.ps1"))) -GitHubUser <you> -ClientCertificate .\winrm-client.cer
+   ```
+
+   It downloads the keys first and shows their fingerprints, creates the temporary
+   admin `temp-local-admin` with a random password nobody sees, then tries each method in turn until one works:
+
+   | Order | Method | Time | Needs |
+   |---|---|---|---|
+   | 1 | **SSH** from the Win32-OpenSSH GitHub release (6 MB; `sshd.exe` must be validly signed by Microsoft) | seconds | `-GitHubUser` or `-PublicKey`, access to GitHub |
+   | 2 | **WinRM**, built into Windows: HTTPS listener on 127.0.0.1, certificate login mapped to `temp-local-admin`. For when GitHub is blocked or security software stops the new sshd service | seconds | `-ClientCertificate` |
+   | 3 | **SSH** from the Windows optional feature (Windows Update) | several minutes | `-GitHubUser` or `-PublicKey` |
+
+   SSH comes first because it changes no security setting and the session is a full admin as it is.
+   `-WinRM` or `-Ssh` limits it to those methods. An existing sshd is reused rather than reinstalled.
+   Everything that was there before is recorded so `-Remove` can put it back. It ends by showing the
+   status, including the WinRM server certificate thumbprint or the SSH host key fingerprint to
+   check. Check again at any time with `-Status`.
+2. In the remote-support tool, forward a local TCP port to the endpoint: local 2222 to
+   `127.0.0.1:22` for SSH, or local 5986 to `127.0.0.1:5986` for WinRM.
+
+Why the temporary account: Windows cannot do key or certificate logins for **Entra ID (AzureAD)
+accounts**, and typing the user's password over a session you suspect is compromised adds risk.
+
+What WinRM changes that SSH does not: it sets **`LocalAccountTokenFilterPolicy` = 1**, without which
+a local admin logging in remotely gets a non-admin token and the checks see little. Attackers set it
+too, so some security tools alert on it; `-Remove` puts it back. It also trusts your client
+certificate in the machine's Root store for the session. The certificate is CA:FALSE, so it cannot
+be used to issue other certificates, and `-Remove` removes it.
+
+Exposure: sshd listens on 127.0.0.1 only. The WinRM listener only answers on 127.0.0.1, but Windows'
+HTTP service opens the port on all addresses, so it is the Windows Firewall (no inbound rule is
+added) that keeps it off the network. `-Status` names any inbound rule that would expose it.
+
+### 3. Run the checks
 
 Copy `ps/` to the endpoint and start the runner from its text in an elevated PowerShell in that
 folder. It runs each check from its text too (`[scriptblock]::Create`), not as a script file, so the
@@ -59,6 +113,28 @@ It writes one `NN-*.txt` per check and `00-manifest.txt` (what ran, as whom, ele
 of collected files) to `C:\ProgramData\endpoint-triage\out\<computer>-<time>\`. Copy that folder to
 `.scratch_area/endpoint-cases/`. To explain a single moment later, run it again with
 `-Check 11 -Time "2026-01-15 14:22:05"`.
+
+### 4. Remove the access
+
+Collect everything first. Then at the endpoint's console (or through the remote-support tool, not
+over the remote session you are removing), in an elevated PowerShell, run `Set-TriageAccess.ps1`
+the same way with `-Remove` (`-WhatIf` shows the plan).
+
+It undoes whichever method was used:
+- **WinRM:** removes the listener, the certificate mapping, the temporary server certificate and your
+  trusted client certificate, and puts certificate authentication, `LocalAccountTokenFilterPolicy`
+  and the WinRM service back as they were.
+- **SSH:** restores or deletes `administrators_authorized_keys` and `sshd_config`, and uninstalls
+  OpenSSH if it installed it (GitHub copy, including the machine `PATH` entry its installer adds, or
+  Windows feature), otherwise restores the sshd service. `-KeepOpenSsh` leaves OpenSSH installed.
+- **Both:** deletes `temp-local-admin` and its profile, and `C:\ProgramData\endpoint-triage`.
+
+If `temp-local-admin` still has programs running (a session still open), it stops and says so; close the
+session and run `-Remove` again. Windows often keeps a profile loaded for a while after the last
+logoff, even with nothing running: then it deletes the account at once (that ends the access) and
+asks you to restart the PC and run `-Remove` again to delete the profile folder.
+
+Record what you added and removed in the case notes so it is not mistaken for attacker activity.
 
 ## Reading the results: things that look bad but are not
 
@@ -88,18 +164,22 @@ of collected files) to `C:\ProgramData\endpoint-triage\out\<computer>-<time>\`. 
 | Problem | Cause | Workaround |
 |---|---|---|
 | Multi-line PowerShell pasted through RustDesk arrived in reverse line order | Clipboard sync splits lines | Paste one-liners, or copy scripts over with file transfer |
+| `Permission denied` for an Entra ID account with a valid key | Key auth needs S4U, unsupported for cloud accounts | Temporary local admin from `Set-TriageAccess.ps1` |
 | `The command line is too long` | `powershell -EncodedCommand` over cmd.exe is limited to 8191 characters | Copy the scripts over first and run them there |
 | A `foreach` loop "cannot be piped" | `foreach` is a statement, not a pipeline command | Wrap it: `& { foreach (...) { ... } } \| ...` |
 | `Could not compare ... to "[datetime]..."` | `Where-Object Prop -gt [datetime]'...'` (simplified syntax) treats the cast as a string | Use a script block: `Where-Object { $_.Prop -gt $date }` |
 | Garbled text, odd parse errors on the endpoint | Windows PowerShell 5.1 reads BOM-less files as ANSI | Scripts are ASCII-only; the tests enforce it |
 | `connection_trace.txt` reads as spaced-out letters | It is UTF-16 | `ConvertFrom-TriageAnyDeskConnectionTrace` detects the encoding |
+| OpenSSH Server took many minutes to install | The Windows optional feature downloads from Windows Update | `Set-TriageAccess.ps1` tries the GitHub release of Win32-OpenSSH first, then WinRM, and only then the Windows feature |
 
 ## Tests
 
-`scripts/test.sh` runs everything in the `m365-admin` container with no endpoint. Tags: `Static`, `Unit`.
+`scripts/test.sh` runs everything in the `m365-admin` container with no endpoint. Tags: `Static`, `Unit`, `Scripts`.
 
-- **Static:** every file parses, passes PSScriptAnalyzer including `PSUseCompatibleSyntax` for 5.1, is ASCII-only and avoids 7-only parameters. Checks and `TriageCommon.ps1` call nothing that changes the endpoint and never touch browser credential stores. Every check has help, follows the naming convention, is run by the runner and is listed in this README. Only documentation, private or loopback IPs appear in the folder.
+- **Static:** every file parses, passes PSScriptAnalyzer including `PSUseCompatibleSyntax` for 5.1, is ASCII-only and avoids 7-only parameters. Checks and `TriageCommon.ps1` call nothing that changes the endpoint and never touch browser credential stores. Every check has help, follows the naming convention, is run by the runner and is listed in this README. Setup scripts support `-WhatIf` and confirm. Only documentation, private or loopback IPs appear in the folder.
 - **Unit:** AnyDesk trace, config and connection-trace parsing (sessions, IPs, elevation, privacy windows, file events, unattended password), check 03 end to end on a folder of files, the Prefetch parser.
+- **Scripts:** `new-winrm-cert.sh` refuses to write inside a git repository and makes a client-authentication, CA:FALSE certificate with the right UPN and a private key only you can read.
 
-The Windows-only parts (event logs, registry, WMI, compressed Prefetch) can only be exercised on a
-Windows machine: run them on a test PC after changing them.
+The Windows-only parts (event logs, registry, WMI, compressed Prefetch, and everything
+`Set-TriageAccess.ps1` does) can only be exercised on a Windows machine: run them on a test PC after
+changing them, including `Set-TriageAccess.ps1` with each of `-WinRM` and `-Ssh` followed by `-Remove`.

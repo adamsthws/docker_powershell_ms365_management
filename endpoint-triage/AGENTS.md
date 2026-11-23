@@ -5,10 +5,11 @@ Read [README.md](README.md) first.
 
 ## Rules
 
-- **Read-only during a live triage unless the operator says otherwise.** Run only the checks. Anything that changes the endpoint (installing, deleting, disabling, creating accounts, changing settings) needs the operator's explicit approval for that one change.
+- **Read-only during a live triage unless the operator says otherwise.** Run only the checks. Anything that changes the endpoint (installing, deleting, disabling, creating accounts, changing settings) needs the operator's explicit approval for that one change. `ps/setup/Set-TriageAccess.ps1` is the only script here that changes an endpoint, and it confirms first.
 - **Checks never change the endpoint.** A check may read files, the registry, event logs, WMI and network state. It may not write, delete, start or stop anything. `tests/Static.Tests.ps1` enforces this with a list of state-changing commands; extend the list rather than the exceptions.
 - **Never collect credentials.** Do not read or copy browser `Login Data`, `Cookies`, `Local State`, `Web Data`, Firefox `key4.db` / `logins.json`, Credential Manager vaults or DPAPI keys. Browser `History` only with the operator's approval, as a file copy, never by opening it in place.
 - **Windows PowerShell 5.1 and ASCII.** The checks run on a stock Windows. No PowerShell 7-only syntax or parameters (`??`, ternary, `-Parallel`, `-AsHashtable`, three-argument `Join-Path`). No characters above 127, including in comments.
+- **No certificates or keys in git, ever.** The operator's WinRM client certificate and key live in `~/.config/endpoint-triage/`; SSH keys in `~/.ssh/`. Never write them into this repository,.
 - **Case data stays out of git.** Results go to `.scratch_area/endpoint-cases/` (gitignored). Use documentation IPs (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) and made-up names in docs, tests and examples.
 - **Times are local to the endpoint.** Say so, with the time zone, whenever you report one. Microsoft 365 logs are UTC.
 - **Do not overclaim.** "No sign of X" is about what the logs cover: say which logs, which period and which users' hives were checked.
