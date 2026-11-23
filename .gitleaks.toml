@@ -1,0 +1,37 @@
+# gitleaks configuration: the default rule set, extra rules for this repo, and an allowlist.
+# Used by scripts/scan-secrets.sh, the pre-commit hook in .githooks/ and the GitHub workflow.
+title = "powershell_docker secret scan"
+
+[extend]
+useDefault = true
+
+# Certificates and public keys are not secrets to gitleaks' defaults, but this public repo must never
+# carry the operator's own (endpoint-triage WinRM certificates, SSH keys, setup lines that embed them).
+
+[[rules]]
+id = "certificate-or-key-file"
+description = "Certificate, key or keystore file"
+path = '''(?i)\.(pem|cer|crt|der|key|pfx|p12|p8|jks|ppk)$'''
+
+[[rules]]
+id = "pem-block"
+description = "PEM certificate or key block"
+regex = '''-----BEGIN [A-Z ]*(CERTIFICATE|PRIVATE KEY|PUBLIC KEY)-----'''
+
+[[rules]]
+id = "base64-der-certificate"
+description = "Base64 DER certificate or key"
+regex = '''MII[A-Za-z0-9+/]{200,}={0,2}'''
+
+[[rules]]
+id = "ssh-public-key"
+description = "Full SSH public key"
+regex = '''(ssh-(ed25519|rsa|dss)|ecdsa-sha2-nistp\d+) AAAA[A-Za-z0-9+/]{60,}={0,3}'''
+
+[allowlist]
+description = "Gitignored working data (case folders, test module cache) and binary assets"
+paths = [
+    '''(^|/)\.scratch_area/''',
+    '''(^|/)\.git/''',
+    '''\.(png|jpe?g|gif|ico|pdf)$''',
+]

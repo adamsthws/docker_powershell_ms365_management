@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Block commits that contain secrets. Enable once per clone with:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+repo_dir="$(git rev-parse --show-toplevel)"
+if ! "$repo_dir/scripts/scan-secrets.sh" staged; then
+    echo >&2
+    echo "pre-commit: gitleaks found a possible secret in the staged changes (see above)." >&2
+    echo "Remove it from the files (and revoke it if it is real), or mark a false positive with a" >&2
+    echo "trailing 'gitleaks:allow' comment on that line, then commit again." >&2
+    exit 1
+fi

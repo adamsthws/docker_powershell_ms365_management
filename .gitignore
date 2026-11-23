@@ -1,2 +1,18 @@
 # Local working area: BEC case folders (client evidence and personal data) and other scratch files.
 .scratch_area/
+
+# Keys and certificates must never be committed: WinRM client certificates (new-winrm-cert.sh
+# writes them to ~/.config/endpoint-triage/), SSH keys, TLS keys and keystores.
+*.key
+*.pem
+*.cer
+*.crt
+*.der
+*.pfx
+*.p12
+*.p8
+*.jks
+*.ppk
+id_rsa
+id_ecdsa
+id_ed25519

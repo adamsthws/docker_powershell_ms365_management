@@ -85,6 +85,22 @@ The compose file uses `network_mode: host` so the container shares your host's `
 
 [`endpoint-triage/`](endpoint-triage/README.md) is a set of read-only checks for a Windows PC after someone else has had remote control of it (for example a fake bank-support call over AnyDesk). It looks for a way back in (accounts, remote-access tools, autostart, tasks, services, WMI, SSH keys, Defender) and reconstructs the session (remote IPs, elevation, black-screen periods, programs run, files, passkey prompts). The checks run on the endpoint in Windows PowerShell 5.1; `endpoint-triage/scripts/triage.sh` runs them over WinRM or SSH (through a remote-support tunnel) and copies the results back.
 
+## Secret scanning
+
+[gitleaks](https://github.com/gitleaks/gitleaks) checks for API keys, tokens, private keys and passwords. It runs from a pinned Docker image, so nothing needs installing:
+
+```bash
+scripts/scan-secrets.sh           # the full git history
+scripts/scan-secrets.sh staged    # what is staged for the next commit
+scripts/scan-secrets.sh dir       # the working tree, including uncommitted files
+```
+
+- **Before each commit:** enable the hook once per clone with `git config core.hooksPath .githooks`. Commits that add a secret are then refused.
+- **On GitHub:** `.github/workflows/secret-scan.yml` scans the full history on every push and pull request.
+- **Rules:** gitleaks defaults plus rules for this repo in `.gitleaks.toml`: PEM blocks, pasted base64 certificates and full SSH public keys. Certificate and key files (`.pem`, `.cer`, `.key`, `.pfx` and so on) are refused by name, binary or not, and are also in `.gitignore`. Gitignored case data in `.scratch_area/` is excluded.
+- **False positives:** add a trailing `gitleaks:allow` comment to that line.
+- **Real secrets:** remove it and **revoke it**. Once pushed, assume it has been copied, even if you rewrite history.
+
 ## Files
 
 | File | Purpose |
@@ -93,6 +109,9 @@ The compose file uses `network_mode: host` so the container shares your host's `
 | `docker-compose.yml` | Runs the container interactively with host networking |
 | `business-email-compromise/` | BEC recovery procedures, PowerShell helpers and case scripts |
 | `endpoint-triage/` | Read-only Windows endpoint checks, WinRM/SSH access setup and removal, and a runner script |
+| `scripts/scan-secrets.sh`, `.gitleaks.toml` | Secret scanning with gitleaks (history, staged changes or working tree) |
+| `.githooks/pre-commit` | Refuses commits that add a secret (enable with `git config core.hooksPath .githooks`) |
+| `.github/workflows/secret-scan.yml` | Runs the secret scan on every push and pull request |
 
 ## Notes
 
