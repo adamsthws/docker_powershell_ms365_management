@@ -81,6 +81,10 @@ The compose file uses `network_mode: host` so the container shares your host's `
 
 [`business-email-compromise/`](business-email-compromise/README.md) is a runbook and tooling for recovering a compromised Microsoft 365 mailbox, built on this container. It covers intake, containment, evidence, investigation, recipient notification, mail recovery, the tenant sweep and reporting. Start a case with `business-email-compromise/scripts/new-case.sh`.
 
+## Windows endpoint triage
+
+[`endpoint-triage/`](endpoint-triage/README.md) is a set of read-only checks for a Windows PC after someone else has had remote control of it (for example a fake bank-support call over AnyDesk). It looks for a way back in (accounts, remote-access tools, autostart, tasks, services, WMI, SSH keys, Defender) and reconstructs the session (remote IPs, elevation, black-screen periods, programs run, files, passkey prompts). The checks run on the endpoint in Windows PowerShell 5.1.
+
 ## Files
 
 | File | Purpose |
@@ -88,6 +92,7 @@ The compose file uses `network_mode: host` so the container shares your host's `
 | `Dockerfile` | Builds the image: PowerShell + modules + `xdg-open` stub |
 | `docker-compose.yml` | Runs the container interactively with host networking |
 | `business-email-compromise/` | BEC recovery procedures, PowerShell helpers and case scripts |
+| `endpoint-triage/` | Read-only Windows endpoint checks |
 
 ## Notes
 
