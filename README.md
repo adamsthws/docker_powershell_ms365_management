@@ -83,7 +83,7 @@ The compose file uses `network_mode: host` so the container shares your host's `
 
 ## Windows endpoint triage
 
-[`endpoint-triage/`](endpoint-triage/README.md) is a set of read-only checks for a Windows PC after someone else has had remote control of it (for example a fake bank-support call over AnyDesk). It looks for a way back in (accounts, remote-access tools, autostart, tasks, services, WMI, SSH keys, Defender) and reconstructs the session (remote IPs, elevation, black-screen periods, programs run, files, passkey prompts). The checks run on the endpoint in Windows PowerShell 5.1.
+[`endpoint-triage/`](endpoint-triage/README.md) is a set of read-only checks for a Windows PC after someone else has had remote control of it (for example a fake bank-support call over AnyDesk). It looks for a way back in (accounts, remote-access tools, autostart, tasks, services, WMI, SSH keys, Defender) and reconstructs the session (remote IPs, elevation, black-screen periods, programs run, files, passkey prompts). The checks run on the endpoint in Windows PowerShell 5.1; `endpoint-triage/scripts/triage.sh` runs them over WinRM or SSH (through a remote-support tunnel) and copies the results back.
 
 ## Files
 
@@ -92,7 +92,7 @@ The compose file uses `network_mode: host` so the container shares your host's `
 | `Dockerfile` | Builds the image: PowerShell + modules + `xdg-open` stub |
 | `docker-compose.yml` | Runs the container interactively with host networking |
 | `business-email-compromise/` | BEC recovery procedures, PowerShell helpers and case scripts |
-| `endpoint-triage/` | Read-only Windows endpoint checks, and WinRM/SSH access setup and removal |
+| `endpoint-triage/` | Read-only Windows endpoint checks, WinRM/SSH access setup and removal, and a runner script |
 
 ## Notes
 

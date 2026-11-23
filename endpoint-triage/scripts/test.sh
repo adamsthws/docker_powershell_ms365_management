@@ -19,6 +19,14 @@ else
     echo "shellcheck not installed on the host; skipping it."
 fi
 
+# winrm_client.py runs on the host (the container has no Python), so check it here.
+if command -v python3 >/dev/null 2>&1; then
+    python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$triage_dir/scripts/winrm_client.py" &&
+        echo "winrm_client.py: syntax OK"
+else
+    echo "python3 not installed on the host; skipping the winrm_client.py syntax check."
+fi
+
 if ! docker image inspect m365-admin-pwsh:local >/dev/null 2>&1; then
     docker compose -f "$repo_dir/docker-compose.yml" build
 fi

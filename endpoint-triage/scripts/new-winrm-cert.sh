@@ -10,7 +10,7 @@
 #
 # Writes:
 #   winrm-client.key  private key: keep it here, never copy it to an endpoint
-#   winrm-client.pem  certificate, for your WinRM client
+#   winrm-client.pem  certificate, used by triage.sh
 #   winrm-client.cer  the same certificate (DER), for copying to an endpoint by hand
 #
 # WinRM cannot reuse your SSH key: Windows only accepts X.509 client certificates with RSA or

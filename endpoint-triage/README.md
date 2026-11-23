@@ -6,9 +6,9 @@ Read-only checks for a Windows PC after someone else has had remote control of i
 - **Is there a way back in?** Accounts, remote-access tools, autostart entries, services, scheduled tasks, WMI, SSH keys, Defender exclusions, proxy, root certificates.
 - **What happened during the session?** Who connected and from which IP, whether they had admin rights, when the screen was blacked out, what ran, what files appeared, which sign-in or passkey prompts were shown.
 
-The checks run **on the endpoint** in Windows PowerShell 5.1 (nothing to install). Run them in an
-elevated PowerShell there and keep the results in `.scratch_area/endpoint-cases/` (gitignored; it
-holds client personal data).
+The checks run **on the endpoint** in Windows PowerShell 5.1 (nothing to install). You can run them
+by hand at the console, or from this repo over SSH or WinRM with `scripts/triage.sh`, which copies
+the results back into `.scratch_area/endpoint-cases/` (gitignored; it holds client personal data).
 
 ## Layout
 
@@ -19,6 +19,8 @@ holds client personal data).
 | `ps/Invoke-EndpointTriage.ps1` | Runs the checks and saves each to a file, plus a manifest; optionally collects AnyDesk logs. |
 | `ps/setup/Set-TriageAccess.ps1` | **Changes the endpoint.** Turns remote PowerShell access on (SSH with your GitHub keys, else WinRM with a client certificate), shows it with `-Status`, and undoes it all with `-Remove`. |
 | `scripts/new-winrm-cert.sh` | Makes your WinRM client certificate (the WinRM equivalent of an SSH key pair), outside any git repository. |
+| `scripts/triage.sh` | Runs everything over WinRM or SSH from Linux and copies the results back. |
+| `scripts/winrm_client.py` | The WinRM client `triage.sh` uses (Python `pypsrp`, certificate login, TLS 1.2, thumbprint check). |
 | `scripts/test.sh`, `tests/` | Test suite (container, no endpoint needed). |
 
 ## The checks
@@ -80,8 +82,8 @@ Then, for each endpoint:
    SSH comes first because it changes no security setting and the session is a full admin as it is.
    `-WinRM` or `-Ssh` limits it to those methods. An existing sshd is reused rather than reinstalled.
    Everything that was there before is recorded so `-Remove` can put it back. It ends by showing the
-   status, including the WinRM server certificate thumbprint or the SSH host key fingerprint to
-   check. Check again at any time with `-Status`.
+   status and the exact `triage.sh` command, including the WinRM server certificate thumbprint or
+   the SSH host key fingerprint to check. Check again at any time with `-Status`.
 2. In the remote-support tool, forward a local TCP port to the endpoint: local 2222 to
    `127.0.0.1:22` for SSH, or local 5986 to `127.0.0.1:5986` for WinRM.
 
@@ -100,19 +102,37 @@ added) that keeps it off the network. `-Status` names any inbound rule that woul
 
 ### 3. Run the checks
 
-Copy `ps/` to the endpoint and start the runner from its text in an elevated PowerShell in that
-folder. It runs each check from its text too (`[scriptblock]::Create`), not as a script file, so the
-checks also run where Group Policy turns PowerShell scripts off, which `-ExecutionPolicy Bypass`
-cannot lift:
-
-```powershell
-$env:ENDPOINT_TRIAGE_ROOT = "$PWD\ps"; & ([scriptblock]::Create([IO.File]::ReadAllText("$PWD\ps\Invoke-EndpointTriage.ps1"))) -From "2026-01-15 14:00" -To "2026-01-15 16:30" -Expected "Splashtop,Syncro" -CollectAnyDesk
+```bash
+endpoint-triage/scripts/triage.sh -F <server thumbprint> -- \
+    -From "2026-01-15 14:00" -To "2026-01-15 16:30" -Expected "Splashtop,Syncro" -CollectAnyDesk
 ```
 
-It writes one `NN-*.txt` per check and `00-manifest.txt` (what ran, as whom, elevated or not, hashes
-of collected files) to `C:\ProgramData\endpoint-triage\out\<computer>-<time>\`. Copy that folder to
-`.scratch_area/endpoint-cases/`. To explain a single moment later, run it again with
-`-Check 11 -Time "2026-01-15 14:22:05"`.
+`triage.sh` finds the tunnel itself: it tries local port 2222, then 5986, and tells WinRM from SSH
+by whether the port sends an SSH banner. Use `-t winrm|ssh` and `-p PORT` to choose. The first WinRM
+run creates a Python virtual environment with `pypsrp` in `.scratch_area/venv-winrm/`.
+
+It asks before copying anything, then saves to `.scratch_area/endpoint-cases/<date>-<computer>/<run>/`:
+one `NN-*.txt` per check, `00-manifest.txt` (what ran, as whom, elevated or not, hashes of collected
+files) and `run-info.txt` (how it connected, and the server certificate thumbprint or host key). To
+explain a single moment later:
+
+```bash
+endpoint-triage/scripts/triage.sh -- -Check 11 -Time "2026-01-15 14:22:05"
+```
+
+`triage.sh` runs the runner, and the runner runs each check, from the script text
+(`[scriptblock]::Create`), not as script files. So the checks also run where Group Policy turns
+PowerShell scripts off, which `-ExecutionPolicy Bypass` cannot lift. On such a PC `Set-TriageAccess.ps1`
+skips the GitHub SSH route (Microsoft's installer is a script file) and goes on to WinRM.
+
+Without remote access, copy `ps/` to the endpoint and start the runner from its text in an elevated
+PowerShell in that folder:
+
+```powershell
+$env:ENDPOINT_TRIAGE_ROOT = "$PWD\ps"; & ([scriptblock]::Create([IO.File]::ReadAllText("$PWD\ps\Invoke-EndpointTriage.ps1"))) -From "2026-01-15 14:00" -To "2026-01-15 16:30"
+```
+
+It writes to `C:\ProgramData\endpoint-triage\out\<computer>-<time>\`; copy that folder back yourself.
 
 ### 4. Remove the access
 
@@ -164,13 +184,17 @@ Record what you added and removed in the case notes so it is not mistaken for at
 | Problem | Cause | Workaround |
 |---|---|---|
 | Multi-line PowerShell pasted through RustDesk arrived in reverse line order | Clipboard sync splits lines | Paste one-liners, or copy scripts over with file transfer |
+| `ssh: remote username contains invalid characters` | OpenSSH refuses `DOMAIN\user` on the command line | `triage.sh` writes it to a config file, which is allowed |
 | `Permission denied` for an Entra ID account with a valid key | Key auth needs S4U, unsupported for cloud accounts | Temporary local admin from `Set-TriageAccess.ps1` |
+| `Too many authentication failures` | ssh-agent offers every key first | `IdentitiesOnly yes` in the generated config |
 | `The command line is too long` | `powershell -EncodedCommand` over cmd.exe is limited to 8191 characters | Copy the scripts over first and run them there |
 | A `foreach` loop "cannot be piped" | `foreach` is a statement, not a pipeline command | Wrap it: `& { foreach (...) { ... } } \| ...` |
 | `Could not compare ... to "[datetime]..."` | `Where-Object Prop -gt [datetime]'...'` (simplified syntax) treats the cast as a string | Use a script block: `Where-Object { $_.Prop -gt $date }` |
 | Garbled text, odd parse errors on the endpoint | Windows PowerShell 5.1 reads BOM-less files as ANSI | Scripts are ASCII-only; the tests enforce it |
 | `connection_trace.txt` reads as spaced-out letters | It is UTF-16 | `ConvertFrom-TriageAnyDeskConnectionTrace` detects the encoding |
 | OpenSSH Server took many minutes to install | The Windows optional feature downloads from Windows Update | `Set-TriageAccess.ps1` tries the GitHub release of Win32-OpenSSH first, then WinRM, and only then the Windows feature |
+| WinRM certificate login fails under TLS 1.3 | Windows asks for the client certificate after the handshake, which Python's TLS client does not support under TLS 1.3 | `winrm_client.py` caps TLS at 1.2 |
+| Two endpoints behind the same tunnel port trigger a host-key warning | Both appear as `127.0.0.1:2222` | `triage.sh` uses a fresh known_hosts per run and records the key in `run-info.txt` |
 
 ## Tests
 
@@ -178,7 +202,7 @@ Record what you added and removed in the case notes so it is not mistaken for at
 
 - **Static:** every file parses, passes PSScriptAnalyzer including `PSUseCompatibleSyntax` for 5.1, is ASCII-only and avoids 7-only parameters. Checks and `TriageCommon.ps1` call nothing that changes the endpoint and never touch browser credential stores. Every check has help, follows the naming convention, is run by the runner and is listed in this README. Setup scripts support `-WhatIf` and confirm. Only documentation, private or loopback IPs appear in the folder.
 - **Unit:** AnyDesk trace, config and connection-trace parsing (sessions, IPs, elevation, privacy windows, file events, unattended password), check 03 end to end on a folder of files, the Prefetch parser.
-- **Scripts:** `new-winrm-cert.sh` refuses to write inside a git repository and makes a client-authentication, CA:FALSE certificate with the right UPN and a private key only you can read.
+- **Scripts:** `triage.sh` syntax, argument validation and port detection; `new-winrm-cert.sh` refuses to write inside a git repository and makes a client-authentication, CA:FALSE certificate with the right UPN and a private key only you can read. `test.sh` also syntax-checks `winrm_client.py` on the host (the container has no Python).
 
 The Windows-only parts (event logs, registry, WMI, compressed Prefetch, and everything
 `Set-TriageAccess.ps1` does) can only be exercised on a Windows machine: run them on a test PC after

@@ -1,9 +1,68 @@
 # Shell script tests: syntax, the argument checks that run before anything connects or changes, and
-# what the scripts write.
+# what the scripts write. (winrm_client.py is syntax-checked on the host by test.sh: the container
+# has no Python.)
 
 BeforeAll {
     $script:dir = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts'
+    $script:sh = Join-Path $dir 'triage.sh'
     $script:certSh = Join-Path $dir 'new-winrm-cert.sh'
+    $script:key = Join-Path $TestDrive 'id_test'
+    Set-Content $key 'not a real key'
+}
+
+Describe 'triage.sh' -Tag Scripts {
+    It 'passes bash -n' {
+        & bash -n $sh 2>&1 | Should -BeNullOrEmpty
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It 'prints usage with -h' {
+        $out = & bash $sh -h 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0
+        $out | Should -Match 'Invoke-EndpointTriage\.ps1'
+        $out | Should -Match 'auto \(default\)'
+    }
+
+    It 'refuses an unknown transport' {
+        $out = & bash $sh -t telnet 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'transport must be'
+    }
+
+    It 'refuses WinRM without a client certificate' {
+        $out = & bash $sh -t winrm -c (Join-Path $TestDrive 'nope.pem') -k (Join-Path $TestDrive 'nope.key') 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'new-winrm-cert\.sh'
+    }
+
+    It 'refuses SSH with a missing key file' {
+        $out = & bash $sh -t ssh -i (Join-Path $TestDrive 'nope') 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'private key not found'
+    }
+
+    It 'refuses runner arguments with characters cmd.exe would interpret' {
+        $out = & bash $sh -t ssh -i $key -- -Time '50%' 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'may not contain'
+    }
+
+    It 'refuses a malformed thumbprint' {
+        $out = & bash $sh -t ssh -i $key -F 'xyz' 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'thumbprint'
+    }
+
+    It 'accepts a DOMAIN\user name' {
+        $out = & bash $sh -t ssh -u 'AzureAD\someone' -i $key -p 1 2>&1 | Out-String
+        $out | Should -Not -Match 'unexpected characters'
+    }
+
+    It 'reports nothing answering when auto-detecting on a closed port' {
+        $out = & bash $sh -p 1 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'nothing answering'
+    }
 }
 
 Describe 'new-winrm-cert.sh' -Tag Scripts {

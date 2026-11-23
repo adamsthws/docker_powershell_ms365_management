@@ -635,12 +635,12 @@ if ($PSCmdlet.ParameterSetName -eq 'Enable') {
 
     Show-AccessStatus $state
     if ($state.Method -eq 'WinRM') {
-        Write-Host "Forward a local port (e.g. 5986) to 127.0.0.1:$WinRMPort on this machine and log in with your client certificate." -ForegroundColor Green
-        Write-Host "  Server certificate thumbprint to check: $($state.ServerCertThumbprint)" -ForegroundColor Green
+        Write-Host "Forward a local port (e.g. 5986) to 127.0.0.1:$WinRMPort on this machine, then from your machine:" -ForegroundColor Green
+        Write-Host "  endpoint-triage/scripts/triage.sh -t winrm -p 5986 -F $($state.ServerCertThumbprint)" -ForegroundColor Green
     }
     else {
         Write-Host 'Forward a local port (e.g. 2222) to 127.0.0.1:22 on this machine, then from your machine:' -ForegroundColor Green
-        Write-Host "  ssh -p 2222 $UserName@127.0.0.1   (compare the host key fingerprint above)" -ForegroundColor Green
+        Write-Host "  endpoint-triage/scripts/triage.sh -t ssh -p 2222 -u $UserName   (compare the host key fingerprint above)" -ForegroundColor Green
     }
     return
 }
