@@ -123,6 +123,13 @@ endpoint-triage/scripts/triage.sh -F <server thumbprint> -- \
 by whether the port sends an SSH banner. Use `-t winrm|ssh` and `-p PORT` to choose. The first WinRM
 run creates a Python virtual environment with `pypsrp` in `.scratch_area/venv-winrm/`.
 
+For SSH it picks the key itself: it reads `github.com/<user>.keys` (the list `Set-TriageAccess.ps1
+-GitHubUser` installed, for the repository owner unless you give `-K USER`) and uses the key pair in
+`~/.ssh` whose public key is in it. It offers only that key, never each key in `~/.ssh` in turn: every
+key offered shows its public half to an endpoint that may be compromised, and sshd drops the
+connection after a few failures. Give `-i KEY` when the endpoint was set up with
+`setup-command.sh -i`, or when GitHub cannot be reached.
+
 It asks before copying anything, then saves to `.scratch_area/endpoint-cases/<date>-<computer>/<run>/`:
 one `NN-*.txt` per check, `00-manifest.txt` (what ran, as whom, elevated or not, hashes of collected
 files) and `run-info.txt` (how it connected, and the server certificate thumbprint or host key). To
@@ -214,7 +221,7 @@ Record what you added and removed in the case notes so it is not mistaken for at
 
 - **Static:** every file parses, passes PSScriptAnalyzer including `PSUseCompatibleSyntax` for 5.1, is ASCII-only and avoids 7-only parameters. Checks and `TriageCommon.ps1` call nothing that changes the endpoint and never touch browser credential stores. Every check has help, follows the naming convention, is run by the runner and is listed in this README. Setup scripts support `-WhatIf` and confirm. Only documentation, private or loopback IPs appear in the folder.
 - **Unit:** AnyDesk trace, config and connection-trace parsing (sessions, IPs, elevation, privacy windows, file events, unattended password), check 03 end to end on a folder of files, the Prefetch parser.
-- **Scripts:** `triage.sh` syntax, argument validation and port detection; `setup-command.sh` prints one pinned line matching the command documented in `Set-TriageAccess.ps1`, with no key material by default (`-GitHubUser`), a local key quoted correctly with `-i`, WinRM only with a valid Gist ID, and refuses a private key; `new-winrm-cert.sh` refuses to write inside a git repository and makes a client-authentication, CA:FALSE certificate with the right UPN and a private key only you can read. `test.sh` also syntax-checks `winrm_client.py` on the host (the container has no Python).
+- **Scripts:** `triage.sh` syntax, argument validation, port detection and SSH key choice (only the key pair whose public key is in the trusted list; clear errors for no match or an empty list; `-i` skips the lookup); `setup-command.sh` prints one pinned line matching the command documented in `Set-TriageAccess.ps1`, with no key material by default (`-GitHubUser`), a local key quoted correctly with `-i`, WinRM only with a valid Gist ID, and refuses a private key; `new-winrm-cert.sh` refuses to write inside a git repository and makes a client-authentication, CA:FALSE certificate with the right UPN and a private key only you can read. `test.sh` also syntax-checks `winrm_client.py` on the host (the container has no Python).
 
 The Windows-only parts (event logs, registry, WMI, compressed Prefetch, and everything
 `Set-TriageAccess.ps1` does) can only be exercised on a Windows machine: run them on a test PC after

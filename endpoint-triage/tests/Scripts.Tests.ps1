@@ -64,6 +64,69 @@ Describe 'triage.sh' -Tag Scripts {
         $LASTEXITCODE | Should -Be 2
         $out | Should -Match 'nothing answering'
     }
+
+    It 'refuses a bad GitHub user for the key lookup' {
+        $out = & bash $sh -t ssh -K 'bad user;' 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'not a GitHub user name'
+    }
+}
+
+Describe 'triage.sh SSH key choice' -Tag Scripts {
+    BeforeAll {
+        # Made-up key pairs: the public halves are fake strings, the private halves placeholders.
+        $script:sshDir = Join-Path $TestDrive 'dotssh'
+        New-Item -ItemType Directory -Path $sshDir | Out-Null
+        $script:matchPub = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAImatchexample'
+        foreach ($k in @(
+                @('id_other', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIotherexample other@example'),
+                @('work_match', "$matchPub analyst@example"),
+                @('nopriv_match', "$matchPub stray@example"))) {
+            Set-Content (Join-Path $sshDir "$($k[0]).pub") $k[1]
+            if ($k[0] -ne 'nopriv_match') { Set-Content (Join-Path $sshDir $k[0]) 'not a real key' }
+        }
+        $script:keysFile = Join-Path $TestDrive 'user.keys'
+        Set-Content $keysFile "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQexample`n$matchPub"
+        $script:oldSshDir = $env:ENDPOINT_TRIAGE_SSH_DIR
+        $script:oldKeys = $env:ENDPOINT_TRIAGE_KEYS_FILE
+        $env:ENDPOINT_TRIAGE_SSH_DIR = $sshDir
+    }
+    AfterAll {
+        $env:ENDPOINT_TRIAGE_SSH_DIR = $oldSshDir
+        $env:ENDPOINT_TRIAGE_KEYS_FILE = $oldKeys
+    }
+
+    It 'uses only the key pair whose public key the endpoint trusts' {
+        $env:ENDPOINT_TRIAGE_KEYS_FILE = $keysFile
+        $out = & bash $sh -t ssh -p 1 2>&1 | Out-String
+        $out | Should -Match ('Using SSH key ' + [regex]::Escape((Join-Path $sshDir 'work_match')) + ' ')
+        $out | Should -Not -Match 'id_other|nopriv_match'
+    }
+
+    It 'fails clearly when no local key pair is in the list' {
+        $none = Join-Path $TestDrive 'none.keys'
+        Set-Content $none 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAInobodyexample'
+        $env:ENDPOINT_TRIAGE_KEYS_FILE = $none
+        $out = & bash $sh -t ssh -p 1 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'none of the key pairs .* has its public key in .*\(1 key\(s\) there\); give the key with -i'
+    }
+
+    It 'fails clearly when the list is empty' {
+        $empty = Join-Path $TestDrive 'empty.keys'
+        Set-Content $empty ''
+        $env:ENDPOINT_TRIAGE_KEYS_FILE = $empty
+        $out = & bash $sh -t ssh -p 1 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'lists no keys'
+    }
+
+    It 'skips the lookup when -i names the key' {
+        $env:ENDPOINT_TRIAGE_KEYS_FILE = Join-Path $TestDrive 'missing.keys'
+        $out = & bash $sh -t ssh -p 1 -i (Join-Path $sshDir 'id_other') 2>&1 | Out-String
+        $out | Should -Not -Match 'Using SSH key|cannot read'
+        $out | Should -Match 'Connecting over SSH'
+    }
 }
 
 Describe 'new-winrm-cert.sh' -Tag Scripts {

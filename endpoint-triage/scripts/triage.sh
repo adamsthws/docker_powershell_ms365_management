@@ -12,7 +12,9 @@
 #   -F  WinRM: expected server certificate thumbprint, as printed by Set-TriageAccess.ps1
 #   -c, -k  WinRM client certificate and key (default ~/.config/endpoint-triage/winrm-client.pem/.key,
 #           made by new-winrm-cert.sh)
-#   -u, -i  SSH user (default temp-local-admin) and private key (default ~/.ssh/id_ed25519)
+#   -u, -i  SSH user (default temp-local-admin) and private key (default: the key in ~/.ssh whose public
+#           key is at github.com/USER.keys, which is what Set-TriageAccess.ps1 -GitHubUser trusts)
+#   -K  GitHub user for that lookup (default: OWNER of the origin repository, as setup-command.sh uses)
 #
 # Runner args go to Invoke-EndpointTriage.ps1, for example:
 #   triage.sh -- -From "2026-01-15 14:00" -To "2026-01-15 16:30" -Expected "Splashtop,Syncro" -CollectAnyDesk
@@ -34,14 +36,16 @@ transport=auto
 host=127.0.0.1
 port=""
 user=temp-local-admin
-ssh_key="$HOME/.ssh/id_ed25519"
+ssh_key=""
+gh_user=""
 cert="$config_dir/winrm-client.pem"
 cert_key="$config_dir/winrm-client.key"
 thumb=""
 outdir=""
-while getopts ":t:u:p:H:i:c:k:F:o:h" opt; do
+while getopts ":t:u:p:H:i:K:c:k:F:o:h" opt; do
     case "$opt" in
         t) transport="$OPTARG" ;;
+        K) gh_user="$OPTARG" ;;
         u) user="$OPTARG" ;;
         p) port="$OPTARG" ;;
         H) host="$OPTARG" ;;
@@ -63,17 +67,57 @@ runner_args=("$@")
 [[ -z "$port" || "$port" =~ ^[0-9]+$ ]] || die "port must be a number: $port"
 [[ "$user" =~ ^[A-Za-z0-9._@\\-]+$ ]] || die "user name has unexpected characters: $user"
 [[ -z "$thumb" || "$thumb" =~ ^[0-9A-Fa-f:\ ]{40,59}$ ]] || die "thumbprint should be 40 hex characters: $thumb"
+[[ -z "$gh_user" || "$gh_user" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || die "not a GitHub user name: $gh_user"
 for a in "${runner_args[@]}"; do
     [[ "$a" != *'"'* && "$a" != *'%'* ]] || die "runner arguments may not contain \" or %: $a"
 done
+triage_dir="$(cd "$(dirname "$0")/.." && pwd)"
+repo_dir="$(cd "$triage_dir/.." && pwd)"
+
+# Without -i, use the one local key pair whose public key is in the list the endpoint trusts
+# (github.com/USER.keys, as given to Set-TriageAccess.ps1 -GitHubUser), and offer only that key.
+# Not every key in ~/.ssh in turn: each key offered shows its public half to an endpoint that may be
+# compromised, and sshd drops the connection after a few failures (MaxAuthTries, 6 by default).
+# For tests, ENDPOINT_TRIAGE_KEYS_FILE replaces the GitHub list and ENDPOINT_TRIAGE_SSH_DIR ~/.ssh.
+resolve_ssh_key() {
+    if [[ -n "$ssh_key" ]]; then
+        [[ -f "$ssh_key" ]] || die "private key not found: $ssh_key"
+        return
+    fi
+    local ssh_dir="${ENDPOINT_TRIAGE_SSH_DIR:-$HOME/.ssh}" keys src origin pub t b matches=()
+    if [[ -n "${ENDPOINT_TRIAGE_KEYS_FILE:-}" ]]; then
+        src="$ENDPOINT_TRIAGE_KEYS_FILE"
+        keys="$(cat "$src")" || die "cannot read $src"
+    else
+        if [[ -z "$gh_user" ]]; then
+            origin="$(git -C "$repo_dir" remote get-url origin 2>/dev/null)" || die "no origin remote to take the GitHub user from; give -K USER or -i KEY"
+            gh_user="$(sed -E -n 's#^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+)/[^/]+$#\2#p' <<<"$origin")"
+            [[ "$gh_user" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || die "origin is not a GitHub repository ($origin); give -K USER or -i KEY"
+        fi
+        src="github.com/$gh_user.keys"
+        keys="$(curl -fsS --max-time 15 "https://$src")" || die "could not read $src; give the key with -i"
+    fi
+    keys="$(tr -d '\r' <<<"$keys" | awk 'NF >= 2 { print $1 " " $2 }')"
+    [[ -n "$keys" ]] || die "$src lists no keys; give the key with -i"
+    shopt -s nullglob
+    for pub in "$ssh_dir"/*.pub; do
+        read -r t b _ <<<"$(head -n1 "$pub" | tr -d '\r')" || true
+        [[ -n "${b:-}" && -f "${pub%.pub}" ]] || continue
+        if grep -qxF -- "$t $b" <<<"$keys"; then matches+=("${pub%.pub}"); fi
+    done
+    shopt -u nullglob
+    [[ ${#matches[@]} -gt 0 ]] ||
+        die "none of the key pairs in $ssh_dir has its public key in $src ($(wc -l <<<"$keys") key(s) there); give the key with -i"
+    ssh_key="${matches[0]}"
+    echo "Using SSH key $ssh_key (its public key is in $src)"
+    if [[ ${#matches[@]} -gt 1 ]]; then echo "  (also in that list: ${matches[*]:1})"; fi
+}
+
 if [[ "$transport" == winrm ]]; then
     [[ -f "$cert" && -f "$cert_key" ]] || die "WinRM client certificate not found ($cert, $cert_key): make one with scripts/new-winrm-cert.sh"
 elif [[ "$transport" == ssh ]]; then
-    [[ -f "$ssh_key" ]] || die "private key not found: $ssh_key"
+    resolve_ssh_key
 fi
-
-triage_dir="$(cd "$(dirname "$0")/.." && pwd)"
-repo_dir="$(cd "$triage_dir/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -97,7 +141,7 @@ if [[ "$transport" == auto ]]; then
     if [[ "$transport" == winrm && ! ( -f "$cert" && -f "$cert_key" ) ]]; then
         die "WinRM client certificate not found ($cert, $cert_key): make one with scripts/new-winrm-cert.sh"
     fi
-    if [[ "$transport" == ssh && ! -f "$ssh_key" ]]; then die "private key not found: $ssh_key"; fi
+    if [[ "$transport" == ssh ]]; then resolve_ssh_key; fi
 fi
 if [[ -z "$port" ]]; then
     if [[ "$transport" == winrm ]]; then port=5986; else port=2222; fi
