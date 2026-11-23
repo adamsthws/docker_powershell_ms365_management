@@ -19,6 +19,7 @@ the results back into `.scratch_area/endpoint-cases/` (gitignored; it holds clie
 | `ps/Invoke-EndpointTriage.ps1` | Runs the checks and saves each to a file, plus a manifest; optionally collects AnyDesk logs. |
 | `ps/setup/Set-TriageAccess.ps1` | **Changes the endpoint.** Turns remote PowerShell access on (SSH with your GitHub keys, else WinRM with a client certificate), shows it with `-Status`, and undoes it all with `-Remove`. |
 | `scripts/new-winrm-cert.sh` | Makes your WinRM client certificate (the WinRM equivalent of an SSH key pair), outside any git repository. |
+| `scripts/setup-command.sh` | Prints the one line to paste on the endpoint: downloads `Set-TriageAccess.ps1` from this repo, pinned to a commit, pointing at your GitHub keys and certificate Gist. |
 | `scripts/triage.sh` | Runs everything over WinRM or SSH from Linux and copies the results back. |
 | `scripts/winrm_client.py` | The WinRM client `triage.sh` uses (Python `pypsrp`, certificate login, TLS 1.2, thumbprint check). |
 | `scripts/test.sh`, `tests/` | Test suite (container, no endpoint needed). |
@@ -51,26 +52,37 @@ before the first download). Check 03 gives exact AnyDesk times once you are in.
 ### 2. Get access
 
 SSH needs nothing set up: the endpoint takes your public keys from `https://github.com/<you>.keys`.
-For the WinRM fallback, once per machine of yours, make a client certificate (the WinRM equivalent
-of an SSH key pair). WinRM cannot reuse the SSH key: Windows only accepts X.509 client certificates
-with RSA or ECDSA keys, and your GitHub key is Ed25519.
+For the WinRM fallback, once per machine of yours, make a client certificate and publish it (the
+certificate only, never the key) as a Gist. WinRM cannot reuse the SSH key: Windows only accepts
+X.509 client certificates with RSA or ECDSA keys, and your GitHub key is Ed25519.
 
 ```bash
 endpoint-triage/scripts/new-winrm-cert.sh          # writes ~/.config/endpoint-triage/, never inside a git repository
+gh gist create --desc "WinRM client certificate (public; CN=temp-local-admin, UPN temp-local-admin@localhost)" ~/.config/endpoint-triage/winrm-client.pem
+echo <gist id> > ~/.config/endpoint-triage/winrm-gist
 ```
 
 Then, for each endpoint:
 
-1. Copy `ps/setup/Set-TriageAccess.ps1` and `~/.config/endpoint-triage/winrm-client.cer` to the
-   endpoint with the remote-support tool's file transfer. **Never copy `winrm-client.key`
-   anywhere.** In an elevated Windows PowerShell in that folder, run the script from its text, so
-   no execution policy stops it:
+1. On your machine, print the setup line. It is pinned to the commit `origin/main` points to, so
+   run `git fetch` first; the script must already be pushed:
 
-   ```powershell
-   & ([scriptblock]::Create([IO.File]::ReadAllText("$PWD\Set-TriageAccess.ps1"))) -GitHubUser <you> -ClientCertificate .\winrm-client.cer
+   ```bash
+   endpoint-triage/scripts/setup-command.sh
    ```
 
-   It downloads the keys first and shows their fingerprints, creates the temporary
+   It uses the keys of the repository owner on GitHub (`-k USER` for someone else, `-i KEY.pub` for a
+   local key), and the Gist's raw URL pinned to its current revision, after checking the Gist holds
+   the same certificate as your `winrm-client.pem`. The line carries no key material.
+
+2. Paste that **one line** into an elevated Windows PowerShell on the endpoint, through the
+   remote-support session. It downloads `Set-TriageAccess.ps1` from GitHub and runs it in memory. Its
+   general form is documented at the top of the script. If security software blocks download-and-run,
+   copy the script and `winrm-client.cer` over with file transfer and run it with
+   `-PublicKey '...' -ClientCertificate .\winrm-client.cer` instead. **Never copy `winrm-client.key`
+   anywhere.**
+
+   It downloads the keys and certificate first and shows their fingerprints, creates the temporary
    admin `temp-local-admin` with a random password nobody sees, then tries each method in turn until one works:
 
    | Order | Method | Time | Needs |
@@ -84,7 +96,7 @@ Then, for each endpoint:
    Everything that was there before is recorded so `-Remove` can put it back. It ends by showing the
    status and the exact `triage.sh` command, including the WinRM server certificate thumbprint or
    the SSH host key fingerprint to check. Check again at any time with `-Status`.
-2. In the remote-support tool, forward a local TCP port to the endpoint: local 2222 to
+3. In the remote-support tool, forward a local TCP port to the endpoint: local 2222 to
    `127.0.0.1:22` for SSH, or local 5986 to `127.0.0.1:5986` for WinRM.
 
 Why the temporary account: Windows cannot do key or certificate logins for **Entra ID (AzureAD)
@@ -137,8 +149,8 @@ It writes to `C:\ProgramData\endpoint-triage\out\<computer>-<time>\`; copy that 
 ### 4. Remove the access
 
 Collect everything first. Then at the endpoint's console (or through the remote-support tool, not
-over the remote session you are removing), in an elevated PowerShell, run `Set-TriageAccess.ps1`
-the same way with `-Remove` (`-WhatIf` shows the plan).
+over the remote session you are removing), in an elevated PowerShell, paste the line from
+`setup-command.sh -m remove` (or run `.\Set-TriageAccess.ps1 -Remove`; `-WhatIf` shows the plan).
 
 It undoes whichever method was used:
 - **WinRM:** removes the listener, the certificate mapping, the temporary server certificate and your
@@ -202,7 +214,7 @@ Record what you added and removed in the case notes so it is not mistaken for at
 
 - **Static:** every file parses, passes PSScriptAnalyzer including `PSUseCompatibleSyntax` for 5.1, is ASCII-only and avoids 7-only parameters. Checks and `TriageCommon.ps1` call nothing that changes the endpoint and never touch browser credential stores. Every check has help, follows the naming convention, is run by the runner and is listed in this README. Setup scripts support `-WhatIf` and confirm. Only documentation, private or loopback IPs appear in the folder.
 - **Unit:** AnyDesk trace, config and connection-trace parsing (sessions, IPs, elevation, privacy windows, file events, unattended password), check 03 end to end on a folder of files, the Prefetch parser.
-- **Scripts:** `triage.sh` syntax, argument validation and port detection; `new-winrm-cert.sh` refuses to write inside a git repository and makes a client-authentication, CA:FALSE certificate with the right UPN and a private key only you can read. `test.sh` also syntax-checks `winrm_client.py` on the host (the container has no Python).
+- **Scripts:** `triage.sh` syntax, argument validation and port detection; `setup-command.sh` prints one pinned line matching the command documented in `Set-TriageAccess.ps1`, with no key material by default (`-GitHubUser`), a local key quoted correctly with `-i`, WinRM only with a valid Gist ID, and refuses a private key; `new-winrm-cert.sh` refuses to write inside a git repository and makes a client-authentication, CA:FALSE certificate with the right UPN and a private key only you can read. `test.sh` also syntax-checks `winrm_client.py` on the host (the container has no Python).
 
 The Windows-only parts (event logs, registry, WMI, compressed Prefetch, and everything
 `Set-TriageAccess.ps1` does) can only be exercised on a Windows machine: run them on a test PC after

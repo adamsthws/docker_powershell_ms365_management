@@ -6,6 +6,7 @@ BeforeAll {
     $script:dir = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts'
     $script:sh = Join-Path $dir 'triage.sh'
     $script:certSh = Join-Path $dir 'new-winrm-cert.sh'
+    $script:setupSh = Join-Path $dir 'setup-command.sh'
     $script:key = Join-Path $TestDrive 'id_test'
     Set-Content $key 'not a real key'
 }
@@ -120,5 +121,89 @@ Describe 'new-winrm-cert.sh' -Tag Scripts {
         $out = & bash $certSh -u 'bad name' -d (Join-Path $TestDrive 'other') 2>&1 | Out-String
         $LASTEXITCODE | Should -Be 2
         $out | Should -Match 'user name'
+    }
+}
+
+Describe 'setup-command.sh' -Tag Scripts {
+    BeforeAll {
+        $script:sha = '0123456789abcdef0123456789abcdef01234567'
+        $script:oldXdg = $env:XDG_CONFIG_HOME
+        $env:XDG_CONFIG_HOME = Join-Path $TestDrive 'emptyconfig'   # no winrm-gist: never the real one
+        $script:pub = Join-Path $TestDrive 'id_test.pub'
+        Set-Content $pub 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample analyst@example'
+        $script:common = @('-r', $sha, '-g', 'example-owner/example-repo')
+        $script:line = (& bash $setupSh @common -n 2>$null | Out-String).Trim()
+    }
+    AfterAll { $env:XDG_CONFIG_HOME = $oldXdg }
+
+    It 'passes bash -n' {
+        & bash -n $setupSh 2>&1 | Should -BeNullOrEmpty
+    }
+
+    It 'prints one line that downloads the script pinned to the commit' {
+        @($line -split "`n").Count | Should -Be 1
+        $line | Should -Match ([regex]::Escape("https://raw.githubusercontent.com/example-owner/example-repo/$sha/endpoint-triage/ps/setup/Set-TriageAccess.ps1"))
+    }
+
+    It 'takes the SSH keys from the repository owner on GitHub by default, with no key material in the line' {
+        $line | Should -Match ' -GitHubUser example-owner$'
+        $line | Should -Not -Match 'AAAA|MII|PublicKey|ClientCertificate'
+        (& bash $setupSh @common -n -k analyst-example 2>$null | Out-String).Trim() | Should -Match ' -GitHubUser analyst-example$'
+    }
+
+    It 'puts a local public key in the line with -i, quoted for PowerShell' {
+        $l = (& bash $setupSh @common -i $pub 2>$null | Out-String).Trim()
+        $l | Should -Match " -PublicKey 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample analyst@example'$"
+        $l | Should -Not -Match ' -GitHubUser '
+    }
+
+    It 'refuses -k and -i together, and a bad GitHub user' {
+        & bash $setupSh @common -k analyst-example -i $pub 2>&1 | Out-Null
+        $LASTEXITCODE | Should -Be 2
+        & bash $setupSh @common -k 'bad user;' 2>&1 | Out-Null
+        $LASTEXITCODE | Should -Be 2
+    }
+
+    It 'offers WinRM only with a Gist, and checks the Gist ID' {
+        $out = & bash $setupSh @common -t winrm 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'no Gist'
+        $out = & bash $setupSh @common -t winrm -G 'not-a-gist' 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'not a Gist ID'
+        (& bash $setupSh @common -n 2>&1 | Out-String) | Should -Match 'WinRM is not offered'
+    }
+
+    It 'starts exactly like the command documented at the top of Set-TriageAccess.ps1' {
+        $doc = Get-Content (Join-Path (Split-Path $dir -Parent) 'ps/setup/Set-TriageAccess.ps1') | Where-Object { $_ -match 'DownloadString\(' } | Select-Object -First 1
+        $docPrefix = ($doc.Trim() -split "raw\.githubusercontent\.com/")[0]
+        $line | Should -BeLike "$([WildcardPattern]::Escape($docPrefix))*"
+        $doc | Should -Match 'endpoint-triage/ps/setup/Set-TriageAccess\.ps1'
+        $doc | Should -Match '-GitHubUser <GITHUB USER> -ClientCertificate'
+    }
+
+    It 'gives -Status and -Remove commands without keys or certificates' {
+        $status = (& bash $setupSh @common -m status 2>$null | Out-String).Trim()
+        $status | Should -Match '\)\) -Status$'
+        $remove = (& bash $setupSh @common -m remove -u triage-x 2>$null | Out-String).Trim()
+        $remove | Should -Match '\)\) -Remove -UserName triage-x$'
+    }
+
+    It 'limits the methods with -t' {
+        (& bash $setupSh @common -n -t ssh 2>$null | Out-String).Trim() | Should -Match '\)\) -Ssh -GitHubUser example-owner$'
+    }
+
+    It 'refuses a private key given as the public key' {
+        $priv = Join-Path $TestDrive 'id_test'
+        $kind = 'OPENSSH ' + 'PRIVATE KEY'   # built at runtime: no key header appears in the repository
+        Set-Content $priv "-----BEGIN $kind-----`nnot-real`n-----END $kind-----"
+        $out = & bash $setupSh @common -t ssh -i $priv 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2
+        $out | Should -Match 'not an SSH public key'
+    }
+
+    It 'warns when the ref is a branch rather than a commit' {
+        $out = & bash $setupSh -r main -g 'example-owner/example-repo' -n 2>&1 | Out-String
+        $out | Should -Match 'not a commit'
     }
 }

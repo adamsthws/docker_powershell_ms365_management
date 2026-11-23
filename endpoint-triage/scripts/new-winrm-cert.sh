@@ -10,7 +10,8 @@
 #
 # Writes:
 #   winrm-client.key  private key: keep it here, never copy it to an endpoint
-#   winrm-client.pem  certificate, used by triage.sh
+#   winrm-client.pem  certificate, used by triage.sh; publish it once as a Gist so
+#                     setup-command.sh can point the endpoint at it (see the end of the output)
 #   winrm-client.cer  the same certificate (DER), for copying to an endpoint by hand
 #
 # WinRM cannot reuse your SSH key: Windows only accepts X.509 client certificates with RSA or
@@ -75,4 +76,7 @@ chmod 644 "$dir/winrm-client.pem" "$dir/winrm-client.cer"
 thumb="$(openssl x509 -in "$dir/winrm-client.pem" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
 echo "Client certificate for $user@localhost, valid $days days, thumbprint $thumb"
 echo "  keep:              $dir/winrm-client.key, $dir/winrm-client.pem"
-echo "  copy to endpoint:  $dir/winrm-client.cer"
+echo "  copy to endpoint:  $dir/winrm-client.cer (only when not using a Gist)"
+echo "Publish the certificate (not the key) once, so setup-command.sh can use it:"
+echo "  gh gist create $dir/winrm-client.pem   # prints https://gist.github.com/<id>"
+echo "  echo <id> > $dir/winrm-gist"

@@ -2,16 +2,27 @@
 .SYNOPSIS
     Turns temporary remote PowerShell access for triage on (WinRM or SSH), shows it (-Status) or removes it again (-Remove).
 .DESCRIPTION
-    HOW TO RUN IT
-    -------------
-    Copy this file to the endpoint (for example with the remote-support tool's file transfer) and,
-    in an elevated Windows PowerShell (Start > type "powershell" > Run as administrator) in that
-    folder, run it from its text, so no execution policy stops it:
+    ONE-LINE SETUP ON THE ENDPOINT
+    -----------------------------
+    Paste ONE line into an elevated Windows PowerShell on the endpoint (Start > type "powershell" >
+    Run as administrator). It downloads this script from the public repository and runs it in memory:
+
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/adamsthws/docker_powershell_ms365_management/<REF>/endpoint-triage/ps/setup/Set-TriageAccess.ps1'))) -GitHubUser <GITHUB USER> -ClientCertificate '<GIST RAW URL>'
+
+    Do not fill that in by hand: on your own machine run
+
+        endpoint-triage/scripts/setup-command.sh            (or -m status / -m remove)
+
+    It prints the line with <REF> pinned to a published commit (so the code that runs is exactly the
+    code you reviewed). SSH takes your public keys from https://github.com/<GITHUB USER>.keys, and
+    WinRM downloads your client certificate (from new-winrm-cert.sh) from your Gist, pinned to one
+    revision, so the line carries no key material. The same line with -Status or -Remove instead
+    shows or undoes the setup.
+
+    If security software blocks download-and-run, copy this file over with the remote-support tool's
+    file transfer instead and, in that folder, run it from its text with the same parameters:
 
         & ([scriptblock]::Create([IO.File]::ReadAllText("$PWD\Set-TriageAccess.ps1"))) -GitHubUser <GITHUB USER> -ClientCertificate .\winrm-client.cer
-
-    SSH takes your public keys from https://github.com/<GITHUB USER>.keys; WinRM uses your client
-    certificate from scripts/new-winrm-cert.sh. The same with -Status or -Remove shows or undoes it.
 
     WHAT IT DOES
     ------------
@@ -55,7 +66,7 @@
     Your SSH public key, one line ('ssh-ed25519 AAAA... comment'). Can be combined with -GitHubUser.
 .PARAMETER ClientCertificate
     Your WinRM client certificate, made with scripts/new-winrm-cert.sh: an https:// URL to download
-    it from (for example a Gist raw URL pinned to a revision), a path to the .cer
+    it from (a Gist raw URL pinned to a revision, as setup-command.sh gives), a path to the .cer
     file, or the certificate itself as base64 or PEM text. It must be for client authentication
     with the UPN <UserName>@localhost.
 .PARAMETER WinRMPort
